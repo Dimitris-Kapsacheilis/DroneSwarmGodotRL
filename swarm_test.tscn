@@ -1,9 +1,9 @@
-[gd_scene load_steps=14 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=14 format=3 uid="uid://ccumhq1epquiq"]
 
 [ext_resource type="Script" path="res://swarm_controller.gd" id="1_hodql"]
-[ext_resource type="PackedScene" uid="uid://c7nf1r4taf5q5" path="res://drone.tscn" id="2_fuc2v"]
+[ext_resource type="PackedScene" path="res://drone.tscn" id="2_fuc2v"]
 [ext_resource type="Script" path="res://camera_3d.gd" id="3_gull1"]
-[ext_resource type="ArrayMesh" uid="uid://xdonu5qvxahe" path="res://uploads_files_2720101_BusGameMap.obj" id="4_4uwty"]
+[ext_resource type="ArrayMesh" path="res://uploads_files_2720101_BusGameMap.obj" id="4_4uwty"]
 
 [sub_resource type="GDScript" id="GDScript_0bvbt"]
 script/source = "extends Node3D

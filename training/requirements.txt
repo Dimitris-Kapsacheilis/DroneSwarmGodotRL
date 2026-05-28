@@ -1,0 +1,4 @@
+godot-rl>=0.8.2
+stable-baselines3>=2.3
+tensorboard>=2.16
+onnx>=1.16

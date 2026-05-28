@@ -14,3 +14,11 @@ export_credentials.cfg
 .mono/
 data_*/
 mono_crash.*.json
+
+# Python/RL training outputs
+.venv/
+__pycache__/
+*.pyc
+training/logs/
+training/models/
+training/exports/
