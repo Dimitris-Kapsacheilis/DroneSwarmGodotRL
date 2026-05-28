@@ -63,7 +63,6 @@ albedo_color = Color(0, 0, 0, 1)
 [node name="Swarm Controller" type="Node3D" parent="."]
 script = ExtResource("1_hodql")
 drone_packed_scene = ExtResource("2_fuc2v")
-num_drones = 4
 spawn_height = 70.0
 follow_distance = 3.0
 follow_spread = 2.0
