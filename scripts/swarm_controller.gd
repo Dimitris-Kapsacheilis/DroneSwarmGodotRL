@@ -3,7 +3,7 @@ extends Node3D
 const Drone = preload("res://scripts/drone.gd")
 
 @export var drone_packed_scene: PackedScene
-@export var num_drones: int = 4
+@export var num_drones: int = 2
 @export var spawn_height: float = 8.0
 @export var follow_distance: float = 7.0
 @export var follow_spread: float = 4.5
