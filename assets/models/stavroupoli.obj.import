@@ -1,0 +1,22 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://brmnimfwsttgm"
+path="res://.godot/imported/stavroupoli.obj-0e7eb27ce9e8b4bed2d7e9e9754ce50f.mesh"
+
+[deps]
+
+files=["res://.godot/imported/stavroupoli.obj-0e7eb27ce9e8b4bed2d7e9e9754ce50f.mesh"]
+
+source_file="res://assets/models/stavroupoli.obj"
+dest_files=["res://.godot/imported/stavroupoli.obj-0e7eb27ce9e8b4bed2d7e9e9754ce50f.mesh", "res://.godot/imported/stavroupoli.obj-0e7eb27ce9e8b4bed2d7e9e9754ce50f.mesh"]
+
+[params]
+
+generate_tangents=true
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+optimize_mesh=true
+force_disable_mesh_compression=false

@@ -1,0 +1,831 @@
+Wavefront OBJ material file
+# Contains 82 materials
+
+newmtl Stone
+Ns 0
+Ka 0.0972549 0.0972549 0.0972549
+Kd 0.486275 0.486275 0.486275
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Granite
+Ns 0
+Ka 0.0972549 0.0972549 0.0972549
+Kd 0.486275 0.486275 0.486275
+Ks 0.124 0.124 0.124
+illum 2
+d 1
+Tr 0
+
+
+newmtl Andesite
+Ns 0
+Ka 0.0972549 0.0972549 0.0972549
+Kd 0.486275 0.486275 0.486275
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Andesite
+Ns 0
+Ka 0.0972549 0.0972549 0.0972549
+Kd 0.486275 0.486275 0.486275
+Ks 0.124 0.124 0.124
+illum 2
+d 1
+Tr 0
+
+
+newmtl Blackstone
+Ns 0
+Ka 0.0972549 0.0972549 0.0972549
+Kd 0.486275 0.486275 0.486275
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Blackstone
+Ns 0
+Ka 0.0972549 0.0972549 0.0972549
+Kd 0.486275 0.486275 0.486275
+Ks 0.124 0.124 0.124
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Blackstone_Bricks
+Ns 0
+Ka 0.0972549 0.0972549 0.0972549
+Kd 0.486275 0.486275 0.486275
+Ks 0.124 0.124 0.124
+illum 2
+d 1
+Tr 0
+
+
+newmtl Grass_Block
+Ns 0
+Ka 0.109804 0.148235 0.0682353
+Kd 0.54902 0.741176 0.341176
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Dirt
+Ns 0
+Ka 0.109804 0.0776471 0.0533333
+Kd 0.54902 0.388235 0.266667
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Cobblestone
+Ns 0
+Ka 0.101961 0.101961 0.101961
+Kd 0.509804 0.509804 0.509804
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Oak_Planks
+Ns 0
+Ka 0.122353 0.101176 0.0572549
+Kd 0.611765 0.505882 0.286275
+Ks 0.0917647 0.0758824 0.0429412
+illum 2
+d 1
+Tr 0
+
+
+newmtl Stationary_Water
+Ns 0
+Ka 0.0321569 0.0729412 0.199216
+Kd 0.160784 0.364706 0.996078
+Ks 0.00482353 0.0109412 0.0298824
+illum 4
+d 0.535
+Tr 0.465
+Tf 0.91398 0.804882 0.467098
+
+
+newmtl Sand
+Ns 0
+Ka 0.172549 0.163137 0.130196
+Kd 0.862745 0.815686 0.65098
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Gravel
+Ns 0
+Ka 0.104314 0.0964706 0.0964706
+Kd 0.521569 0.482353 0.482353
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Oak_Log
+Ns 0
+Ka 0.0823529 0.065098 0.04
+Kd 0.411765 0.32549 0.2
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Oak_Leaves
+Ns 0
+Ka 0.0870588 0.134902 0.0345098
+Kd 0.435294 0.67451 0.172549
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Glass
+Ns 0
+Ka 0.150588 0.192941 0.199216
+Kd 0.752941 0.964706 0.996078
+Ks 0.0225882 0.0289412 0.0298824
+illum 4
+d 0.5
+Tr 0.5
+Tf 0.623529 0.517647 0.501961
+
+
+newmtl Tinted_Glass
+Ns 0
+Ka 0.150588 0.192941 0.199216
+Kd 0.752941 0.964706 0.996078
+Ks 0.0225882 0.0289412 0.0298824
+illum 4
+d 0.5
+Tr 0.5
+Tf 0.623529 0.517647 0.501961
+
+
+newmtl Sandstone
+Ns 0
+Ka 0.175686 0.169412 0.130196
+Kd 0.878431 0.847059 0.65098
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Short_Grass
+Ns 0
+Ka 0.109804 0.148235 0.0682353
+Kd 0.54902 0.741176 0.341176
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl White_Wool
+Ns 0
+Ka 0.186667 0.186667 0.186667
+Kd 0.933333 0.933333 0.933333
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Blue_Orchid
+Ns 0
+Ka 0.161569 0.0203922 0.00392157
+Kd 0.807843 0.101961 0.0196078
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Stone_Slab
+Ns 0
+Ka 0.129412 0.129412 0.129412
+Kd 0.647059 0.647059 0.647059
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Brick_Slab
+Ns 0
+Ka 0.129412 0.129412 0.129412
+Kd 0.647059 0.647059 0.647059
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Stone_Brick_Slab
+Ns 0
+Ka 0.129412 0.129412 0.129412
+Kd 0.647059 0.647059 0.647059
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Quartz_Slab
+Ns 0
+Ka 0.129412 0.129412 0.129412
+Kd 0.647059 0.647059 0.647059
+Ks 0.155294 0.155294 0.155294
+illum 2
+d 1
+Tr 0
+
+
+newmtl Bricks
+Ns 0
+Ka 0.119216 0.0666667 0.0517647
+Kd 0.596078 0.333333 0.258824
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Oak_Stairs
+Ns 0
+Ka 0.123922 0.100392 0.0619608
+Kd 0.619608 0.501961 0.309804
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Clay
+Ns 0
+Ka 0.127059 0.13098 0.141176
+Kd 0.635294 0.654902 0.705882
+Ks 0.104824 0.108059 0.116471
+illum 2
+d 1
+Tr 0
+
+
+newmtl Glowstone
+Ns 0
+Ka 0.195294 0.166275 0.122353
+Kd 0.976471 0.831373 0.611765
+Ks 0 0 0
+Ke 1 1 1
+illum 2
+d 1
+Tr 0
+
+
+newmtl White_Stained_Glass
+Ns 0
+Ka 0.187451 0.187451 0.187451
+Kd 0.937255 0.937255 0.937255
+Ks 0.0281176 0.0281176 0.0281176
+illum 4
+d 0.5
+Tr 0.5
+Tf 0.531373 0.531373 0.531373
+
+
+newmtl Light_Stained_Glass
+Ns 0
+Ka 0.187451 0.187451 0.187451
+Kd 0.937255 0.937255 0.937255
+Ks 0.0281176 0.0281176 0.0281176
+illum 4
+d 0.5
+Tr 0.5
+Tf 0.531373 0.531373 0.531373
+
+
+newmtl Gray_Stained_Glass
+Ns 0
+Ka 0.187451 0.187451 0.187451
+Kd 0.937255 0.937255 0.937255
+Ks 0.0281176 0.0281176 0.0281176
+illum 4
+d 0.5
+Tr 0.5
+Tf 0.531373 0.531373 0.531373
+
+
+newmtl Light_Stained_Glass
+Ns 0
+Ka 0.187451 0.187451 0.187451
+Kd 0.937255 0.937255 0.937255
+Ks 0.0281176 0.0281176 0.0281176
+illum 4
+d 0.5
+Tr 0.5
+Tf 0.531373 0.531373 0.531373
+
+
+newmtl Brown_Stained_Glass
+Ns 0
+Ka 0.187451 0.187451 0.187451
+Kd 0.937255 0.937255 0.937255
+Ks 0.0281176 0.0281176 0.0281176
+illum 4
+d 0.5
+Tr 0.5
+Tf 0.531373 0.531373 0.531373
+
+
+newmtl Oak_Trapdoor
+Ns 0
+Ka 0.106667 0.08 0.0407843
+Kd 0.533333 0.4 0.203922
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Stone_Bricks
+Ns 0
+Ka 0.094902 0.094902 0.094902
+Kd 0.47451 0.47451 0.47451
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Cracked_Stone_Bricks
+Ns 0
+Ka 0.094902 0.094902 0.094902
+Kd 0.47451 0.47451 0.47451
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Chiseled_Stone_Bricks
+Ns 0
+Ka 0.094902 0.094902 0.094902
+Kd 0.47451 0.47451 0.47451
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Brick_Stairs
+Ns 0
+Ka 0.12549 0.100392 0.0964706
+Kd 0.627451 0.501961 0.482353
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Stone_Brick_Stairs
+Ns 0
+Ka 0.094902 0.094902 0.094902
+Kd 0.47451 0.47451 0.47451
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Nether_Brick
+Ns 0
+Ka 0.0392157 0.0180392 0.0219608
+Kd 0.196078 0.0901961 0.109804
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Nether_Brick_Stairs
+Ns 0
+Ka 0.0392157 0.0180392 0.0219608
+Kd 0.196078 0.0901961 0.109804
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Cauldron
+Ns 0
+Ka 0.0462745 0.0462745 0.0462745
+Kd 0.231373 0.231373 0.231373
+Ks 0.0347059 0.0347059 0.0347059
+illum 2
+d 1
+Tr 0
+
+
+newmtl Cobblestone_Wall
+Ns 0
+Ka 0.101961 0.101961 0.101961
+Kd 0.509804 0.509804 0.509804
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Block_of_Quartz
+Ns 0
+Ka 0.175686 0.173333 0.168627
+Kd 0.878431 0.866667 0.843137
+Ks 0.210824 0.208 0.202353
+illum 2
+d 1
+Tr 0
+
+
+newmtl Quartz_Stairs
+Ns 0
+Ka 0.176471 0.172549 0.163922
+Kd 0.882353 0.862745 0.819608
+Ks 0.211765 0.207059 0.196706
+illum 2
+d 1
+Tr 0
+
+
+newmtl White_Terracotta
+Ns 0
+Ka 0.161569 0.136471 0.123922
+Kd 0.807843 0.682353 0.619608
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Orange_Terracotta
+Ns 0
+Ka 0.161569 0.136471 0.123922
+Kd 0.807843 0.682353 0.619608
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Cyan_Terracotta
+Ns 0
+Ka 0.161569 0.136471 0.123922
+Kd 0.807843 0.682353 0.619608
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Brown_Terracotta
+Ns 0
+Ka 0.161569 0.136471 0.123922
+Kd 0.807843 0.682353 0.619608
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Green_Terracotta
+Ns 0
+Ka 0.161569 0.136471 0.123922
+Kd 0.807843 0.682353 0.619608
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Terracotta
+Ns 0
+Ka 0.116078 0.0705882 0.0509804
+Kd 0.580392 0.352941 0.254902
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Tall_Grass
+Ns 0
+Ka 0.109804 0.148235 0.0682353
+Kd 0.54902 0.741176 0.341176
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl End_Stone_Bricks
+Ns 0
+Ka 0.177255 0.181961 0.134902
+Kd 0.886275 0.909804 0.67451
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Dirt_Path
+Ns 0
+Ka 0.118431 0.0988235 0.0564706
+Kd 0.592157 0.494118 0.282353
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl White_Concrete
+Ns 0
+Ka 0.162353 0.167059 0.167843
+Kd 0.811765 0.835294 0.839216
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Gray_Concrete
+Ns 0
+Ka 0.162353 0.167059 0.167843
+Kd 0.811765 0.835294 0.839216
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Light_Concrete
+Ns 0
+Ka 0.162353 0.167059 0.167843
+Kd 0.811765 0.835294 0.839216
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Brown_Concrete
+Ns 0
+Ka 0.162353 0.167059 0.167843
+Kd 0.811765 0.835294 0.839216
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Black_Concrete
+Ns 0
+Ka 0.162353 0.167059 0.167843
+Kd 0.811765 0.835294 0.839216
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Gray_Concrete_Powder
+Ns 0
+Ka 0.177255 0.178824 0.178824
+Kd 0.886275 0.894118 0.894118
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Brown_Concrete_Powder
+Ns 0
+Ka 0.177255 0.178824 0.178824
+Kd 0.886275 0.894118 0.894118
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Spruce_Trapdoor
+Ns 0
+Ka 0.0807843 0.0611765 0.0407843
+Kd 0.403922 0.305882 0.203922
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Dark_Oak_Trapdoor
+Ns 0
+Ka 0.0611765 0.04 0.0188235
+Kd 0.305882 0.2 0.0941176
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Smooth_Stone
+Ns 0
+Ka 0.12549 0.12549 0.12549
+Kd 0.627451 0.627451 0.627451
+Ks 0.0941177 0.0941177 0.0941177
+illum 2
+d 1
+Tr 0
+
+
+newmtl Smooth_Sandstone
+Ns 0
+Ka 0.12549 0.12549 0.12549
+Kd 0.627451 0.627451 0.627451
+Ks 0.0941177 0.0941177 0.0941177
+illum 2
+d 1
+Tr 0
+
+
+newmtl Quartz
+Ns 0
+Ka 0.12549 0.12549 0.12549
+Kd 0.627451 0.627451 0.627451
+Ks 0.150588 0.150588 0.150588
+illum 2
+d 1
+Tr 0
+
+
+newmtl Mud_Brick_Slab
+Ns 0
+Ka 0.0996078 0.0996078 0.102745
+Kd 0.498039 0.498039 0.513726
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Diorite_Stairs
+Ns 0
+Ka 0.157647 0.157647 0.160784
+Kd 0.788235 0.788235 0.803922
+Ks 0.201 0.201 0.205
+illum 2
+d 1
+Tr 0
+
+
+newmtl End_Stone_Brick_Stairs
+Ns 0
+Ka 0.171765 0.177255 0.128627
+Kd 0.858824 0.886275 0.643137
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Andesite_Stairs
+Ns 0
+Ka 0.0996078 0.0996078 0.103529
+Kd 0.498039 0.498039 0.517647
+Ks 0.127 0.127 0.132
+illum 2
+d 1
+Tr 0
+
+
+newmtl Smooth_Sandstone_Stairs
+Ns 0
+Ka 0.175686 0.169412 0.130196
+Kd 0.878431 0.847059 0.65098
+Ks 0.131765 0.127059 0.0976471
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Blackstone_Brick_Stairs
+Ns 0
+Ka 0.0392157 0.0360784 0.0423529
+Kd 0.196078 0.180392 0.211765
+Ks 0.05 0.046 0.054
+illum 2
+d 1
+Tr 0
+
+
+newmtl Waxed_Block_of_Copper
+Ns 0
+Ka 0.109804 0.0807843 0.152157
+Kd 0.54902 0.403922 0.760784
+Ks 0.131765 0.0969412 0.182588
+illum 2
+d 1
+Tr 0
+
+
+newmtl Cobbled_Deepslate
+Ns 0
+Ka 0.109804 0.0807843 0.152157
+Kd 0.54902 0.403922 0.760784
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Polished_Deepslate
+Ns 0
+Ka 0.109804 0.0807843 0.152157
+Kd 0.54902 0.403922 0.760784
+Ks 0.14 0.103 0.194
+illum 2
+d 1
+Tr 0
+
+
+newmtl Deepslate_Bricks
+Ns 0
+Ka 0.109804 0.0807843 0.152157
+Kd 0.54902 0.403922 0.760784
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Mud
+Ns 0
+Ka 0.109804 0.0807843 0.152157
+Kd 0.54902 0.403922 0.760784
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Mud_Bricks
+Ns 0
+Ka 0.109804 0.0807843 0.152157
+Kd 0.54902 0.403922 0.760784
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Deepslate_Brick_Stairs
+Ns 0
+Ka 0.0588235 0.0588235 0.0588235
+Kd 0.294118 0.294118 0.294118
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
+
+newmtl Mud_Brick_Stairs
+Ns 0
+Ka 0.10902 0.0823529 0.0627451
+Kd 0.545098 0.411765 0.313726
+Ks 0 0 0
+illum 2
+d 1
+Tr 0
+
