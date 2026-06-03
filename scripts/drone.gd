@@ -28,9 +28,24 @@ const RL_TRANSLATION_FORCE := 5.0
 const RL_VERTICAL_FORCE := 8.0
 const RL_YAW_TORQUE := 1.5
 
+@onready var zone_manager = get_node("/root/Swarm Test/NoFlyZoneManager")
+
+
 func _ready() -> void:
 	_apply_color()
-
+	
+func _process(delta: float) -> void:
+	is_in_no_fly_zone()
+	
+func is_in_no_fly_zone() -> bool:
+	print(global_position)
+	for zone in zone_manager.zones:
+		zone.update_drone_state(global_position)
+		if zone.contains_position(global_position):
+			print("NO FLY ZONE VIOLATION")
+			return true
+	return false	
+	
 func _apply_color() -> void:
 	var meshes = find_children("*", "MeshInstance3D", true, true)
 	if meshes.is_empty():

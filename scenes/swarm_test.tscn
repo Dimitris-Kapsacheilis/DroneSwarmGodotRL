@@ -1,9 +1,11 @@
-[gd_scene load_steps=16 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=18 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
 [ext_resource type="PackedScene" uid="uid://c7nf1r4taf5q5" path="res://scenes/drone.tscn" id="2_fuc2v"]
+[ext_resource type="Script" path="res://scripts/NoFlyZone.gd" id="3_63cna"]
 [ext_resource type="Script" path="res://scripts/camera_3d.gd" id="3_gull1"]
 [ext_resource type="ArrayMesh" uid="uid://xdonu5qvxahe" path="res://assets/models/uploads_files_2720101_BusGameMap.obj" id="4_4uwty"]
+[ext_resource type="Script" path="res://scenes/no_fly_zone_manager.gd" id="4_mqnkt"]
 [ext_resource type="Script" path="res://scripts/rl_environment.gd" id="5_x3jkk"]
 [ext_resource type="Script" path="res://scripts/agents/drone_swarm_ai_controller.gd" id="6_h73wq"]
 [ext_resource type="PackedScene" uid="uid://bvag3gg81did5" path="res://assets/models/stavroupoli.glb" id="7_s7ayj"]
@@ -56,6 +58,12 @@ spawn_height = 70.0
 follow_distance = 3.0
 follow_spread = 2.0
 waypoints = Array[Vector3]([Vector3(100, 0, 0), Vector3(0, 100, 0), Vector3(0, 0, 100), Vector3(35, 22, 10), Vector3(-10, 10, -45)])
+
+[node name="NoFlyZone" type="Node3D" parent="."]
+script = ExtResource("3_63cna")
+
+[node name="NoFlyZoneManager" type="Node3D" parent="."]
+script = ExtResource("4_mqnkt")
 
 [node name="RL Environment" type="Node" parent="."]
 script = ExtResource("5_x3jkk")

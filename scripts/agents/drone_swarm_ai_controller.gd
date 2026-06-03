@@ -11,7 +11,7 @@ enum ControlModes {
 
 @export var control_mode: ControlModes = ControlModes.TRAINING
 @export var onnx_model_path := ""
-@export var reset_after := 1800
+@export var reset_after := 180000
 @export var action_repeat: int = 1
 @export var policy_name: String = "shared_policy"
 @export var rl_environment_path: NodePath = NodePath("../RL Environment")

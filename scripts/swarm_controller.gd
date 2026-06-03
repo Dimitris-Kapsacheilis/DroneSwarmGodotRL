@@ -8,6 +8,7 @@ const Drone = preload("res://scripts/drone.gd")
 @export var follow_distance: float = 7.0
 @export var follow_spread: float = 4.5
 
+
 @export var waypoints: Array[Vector3] = [
 	Vector3(0, 12, 0),
 	Vector3(20, 18, -30),
