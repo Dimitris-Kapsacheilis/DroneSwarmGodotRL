@@ -29,13 +29,27 @@ const RL_VERTICAL_FORCE := 8.0
 const RL_YAW_TORQUE := 1.5
 
 @onready var zone_manager = get_node("/root/Swarm Test/NoFlyZoneManager")
-
+@onready var ai_controller = $AIController3D
 
 func _ready() -> void:
+	ai_controller.init(self)
 	_apply_color()
 	
+func game_over():
+	ai_controller.done = true
+	ai_controller.needs_reset = true
+
 func _process(delta: float) -> void:
 	is_in_no_fly_zone()
+	if ai_controller.needs_reset:
+		ai_controller.reset()
+		return
+		
+	var movement : float
+	if ai_controller.heuristic == "human":
+		movement = Input.get_axis("rotate_anticlockwise", "rotate_clockwise")
+	else:
+		movement = ai_controller.move_action
 	
 func is_in_no_fly_zone() -> bool:
 	print(global_position)

@@ -1,6 +1,7 @@
-[gd_scene load_steps=18 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=19 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
+[ext_resource type="Script" path="res://addons/godot_rl_agents/sync.gd" id="1_wjrew"]
 [ext_resource type="PackedScene" uid="uid://c7nf1r4taf5q5" path="res://scenes/drone.tscn" id="2_fuc2v"]
 [ext_resource type="Script" path="res://scripts/NoFlyZone.gd" id="3_63cna"]
 [ext_resource type="Script" path="res://scripts/camera_3d.gd" id="3_gull1"]
@@ -50,6 +51,9 @@ emission_enabled = true
 albedo_color = Color(0, 0, 0, 1)
 
 [node name="Swarm Test" type="Node3D"]
+
+[node name="Sync" type="Node" parent="."]
+script = ExtResource("1_wjrew")
 
 [node name="Swarm Controller" type="Node3D" parent="."]
 script = ExtResource("1_hodql")
