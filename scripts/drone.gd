@@ -25,9 +25,17 @@ const SMOOTH := 6.0
 
 @onready var zone_manager = get_node_or_null("/root/Swarm Test/NoFlyZoneManager")
 
+@export var grid_manager: Node3D # Drag your GridManager node here
+@export var flight_speed: float = 10.0
+@export var arrival_threshold: float = 0.5
+
+var current_target_pos: Vector3 = Vector3.ZERO
+var has_target: bool = false
+
+
 func _ready() -> void:
 	_apply_color()
-	
+	randomize()
 func game_over():
 	pass
 

@@ -1,6 +1,7 @@
-[gd_scene load_steps=5 format=4 uid="uid://c7nf1r4taf5q5"]
+[gd_scene load_steps=6 format=4 uid="uid://c7nf1r4taf5q5"]
 
 [ext_resource type="Script" path="res://scripts/drone.gd" id="1_6o0cx"]
+[ext_resource type="Script" path="res://scripts/navigator.gd" id="2_6ppu1"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_wak22"]
 size = Vector3(1.26172, 0.426697, 0.955933)
@@ -102,3 +103,6 @@ shape = SubResource("BoxShape3D_wak22")
 transform = Transform3D(0.1, 0, 0, 0, 0.1, 0, 0, 0, 0.1, 0, 0, 0)
 material_override = SubResource("StandardMaterial3D_s4kx3")
 mesh = SubResource("ArrayMesh_icjr8")
+
+[node name="Navigator" type="Node3D" parent="."]
+script = ExtResource("2_6ppu1")

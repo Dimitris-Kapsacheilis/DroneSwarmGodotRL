@@ -17,8 +17,12 @@ var box_mesh: BoxMesh
 
 var last_drone_grid_pos: Vector3i = Vector3i(99999, 99999, 99999)
 var last_drone_forward: Vector3 = Vector3.ZERO
+var total_cells_count: float = 0.0
 
 func _ready() -> void:
+	# Calculate total cells in the entire space
+	total_cells_count = float(grid_size.x) * float(grid_size.y) * float(grid_size.z)
+
 	# Define materials
 	blue_material = StandardMaterial3D.new()
 	blue_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -36,10 +40,11 @@ func _ready() -> void:
 	# Build boundaries and allocate scanning highlight pool
 	create_boundary_lines()
 	preallocate_yellow_grid()
+	
+	# Print initial 0% coverage stat
+	print_coverage_stats()
 
 func preallocate_yellow_grid() -> void:
-	# Preallocate the bounding box of meshes. We only render the ones that 
-	# fall inside the active camera cone at any given moment.
 	var diameter = (yellow_radius * 2) + 1
 	for x in range(diameter):
 		for y in range(diameter):
@@ -102,7 +107,7 @@ func create_boundary_lines() -> void:
 		var mesh_inst = MeshInstance3D.new()
 		mesh_inst.mesh = edge_mesh
 		mesh_inst.material_override = red_material
-		mesh_inst.position = (p1 + p2) * 0.5
+		mesh_inst.global_position = (p1 + p2) * 0.5
 		add_child(mesh_inst)
 
 func _process(_delta: float) -> void:
@@ -132,15 +137,12 @@ func _process(_delta: float) -> void:
 		last_drone_forward = forward_dir
 
 func is_inside_camera_frustum(local_offset: Vector3i, forward_dir: Vector3, threshold: float) -> bool:
-	# 1. Sphere range check (makes the sensor edge rounded rather than boxy)
 	if Vector3(local_offset).length() > yellow_radius:
 		return false
 		
-	# The cell the drone is currently occupying is always visible
 	if local_offset == Vector3i.ZERO:
 		return true
 
-	# 2. Field of View angle check using dot product
 	var to_cell = Vector3(local_offset).normalized()
 	var cos_angle = forward_dir.dot(to_cell)
 	
@@ -149,6 +151,7 @@ func is_inside_camera_frustum(local_offset: Vector3i, forward_dir: Vector3, thre
 func mark_yellow_zone_as_visited(center_pos: Vector3i, forward_dir: Vector3) -> void:
 	var fov_threshold = cos(deg_to_rad(camera_fov / 2.0))
 	var diameter = (yellow_radius * 2) + 1
+	var newly_visited = false
 	
 	for x in range(diameter):
 		for y in range(diameter):
@@ -161,27 +164,27 @@ func mark_yellow_zone_as_visited(center_pos: Vector3i, forward_dir: Vector3) -> 
 						if not visited_cells.has(world_coord):
 							visited_cells[world_coord] = true
 							spawn_permanent_trail_box(world_coord)
+							newly_visited = true
+
+	# Print stats only when the coverage percentage actually increases
+	if newly_visited:
+		print_coverage_stats()
 
 func spawn_permanent_trail_box(coord: Vector3i) -> void:
 	var mesh_inst = MeshInstance3D.new()
 	mesh_inst.mesh = box_mesh
 	mesh_inst.material_override = blue_material
-	
-	# Uses local position relative to the GridManager root to remain thread-safe
 	mesh_inst.position = Vector3(coord.x + 0.5, coord.y + 0.5, coord.z + 0.5)
 	mesh_inst.visible = false 
-	
 	add_child(mesh_inst)
 	trail_meshes[coord] = mesh_inst
 
 func update_yellow_grid(center_pos: Vector3i, forward_dir: Vector3) -> void:
-	# Restore visibility of all permanent blue trail meshes
 	for coord in trail_meshes:
 		trail_meshes[coord].visible = true
 
 	var fov_threshold = cos(deg_to_rad(camera_fov / 2.0))
 
-	# Update position of the active scanning zone meshes
 	for local_offset in yellow_meshes.keys():
 		var mesh_inst = yellow_meshes[local_offset]
 		var world_coord = center_pos + local_offset
@@ -190,11 +193,20 @@ func update_yellow_grid(center_pos: Vector3i, forward_dir: Vector3) -> void:
 			mesh_inst.visible = true
 			mesh_inst.position = Vector3(world_coord.x + 0.5, world_coord.y + 0.5, world_coord.z + 0.5)
 
-			# Hide overlapping blue trail meshes to prevent z-fighting
 			if trail_meshes.has(world_coord):
 				trail_meshes[world_coord].visible = false
 		else:
 			mesh_inst.visible = false
+
+func print_coverage_stats() -> void:
+	if total_cells_count <= 0.0:
+		return
+		
+	var visited_count = visited_cells.size()
+	var percentage = (float(visited_count) / total_cells_count) * 100.0
+	
+	# Output the raw visited counts and the calculated coverage percentage
+	print("Coverage: %.4f%% | Cells Visited: %d / %d" % [percentage, visited_count, int(total_cells_count)])
 
 func is_within_bounds(coord: Vector3i) -> bool:
 	return (coord.x >= 0 and coord.x < grid_size.x and

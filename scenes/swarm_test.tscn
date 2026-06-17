@@ -1,4 +1,4 @@
-[gd_scene load_steps=22 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=20 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
 [ext_resource type="Script" path="res://addons/godot_rl_agents/sync.gd" id="1_wjrew"]
@@ -10,7 +10,6 @@
 [ext_resource type="Script" path="res://scripts/rl_environment.gd" id="5_x3jkk"]
 [ext_resource type="Script" path="res://scripts/agents/drone_swarm_ai_controller.gd" id="6_h73wq"]
 [ext_resource type="PackedScene" uid="uid://bvag3gg81did5" path="res://assets/models/stavroupoli.glb" id="7_s7ayj"]
-[ext_resource type="Script" path="res://scripts/fog.gd" id="11_evagq"]
 [ext_resource type="Script" path="res://scripts/grid_manager.gd" id="12_fj23i"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3teta"]
@@ -51,8 +50,6 @@ emission_enabled = true
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_c4yth"]
 albedo_color = Color(0, 0, 0, 1)
-
-[sub_resource type="FogMaterial" id="FogMaterial_xfjuf"]
 
 [node name="Swarm Test" type="Node3D"]
 
@@ -125,18 +122,7 @@ skeleton = NodePath("")
 surface_material_override/0 = SubResource("StandardMaterial3D_c4yth")
 
 [node name="stavroupoli" parent="." instance=ExtResource("7_s7ayj")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112.848, 0, -200.392)
-visible = false
-
-[node name="Fog" type="Node3D" parent="."]
-visible = false
-script = ExtResource("11_evagq")
-
-[node name="FogVolume" type="FogVolume" parent="Fog"]
-visible = false
-material = SubResource("FogMaterial_xfjuf")
-
-[node name="FogInstance" type="MultiMeshInstance3D" parent="Fog"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39.5602, 0, 59.0571)
 visible = false
 
 [node name="GridManager" type="Node3D" parent="."]
