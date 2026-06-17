@@ -92,7 +92,7 @@ _surfaces = [{
 }]
 blend_shape_mode = 0
 
-[node name="Drone" type="RigidBody3D"]
+[node name="Drone" type="RigidBody3D" groups=["drone"]]
 script = ExtResource("1_6o0cx")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]

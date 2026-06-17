@@ -22,3 +22,7 @@ __pycache__/
 training/logs/
 training/models/
 training/exports/
+
+# Ignore the Python virtual environment
+venv/
+.venv/

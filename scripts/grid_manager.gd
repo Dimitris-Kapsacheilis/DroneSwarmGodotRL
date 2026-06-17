@@ -20,28 +20,24 @@ var last_drone_forward: Vector3 = Vector3.ZERO
 var total_cells_count: float = 0.0
 
 func _ready() -> void:
-	# Calculate total cells in the entire space
 	total_cells_count = float(grid_size.x) * float(grid_size.y) * float(grid_size.z)
 
 	# Define materials
 	blue_material = StandardMaterial3D.new()
 	blue_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	blue_material.albedo_color = Color(0.0, 0.5, 1.0, 0.3) # Transparent blue
+	blue_material.albedo_color = Color(0.0, 0.5, 1.0, 0.3)
 	blue_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 	yellow_material = StandardMaterial3D.new()
 	yellow_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	yellow_material.albedo_color = Color(1.0, 0.85, 0.0, 0.3) # Transparent yellow
+	yellow_material.albedo_color = Color(1.0, 0.85, 0.0, 0.3)
 	yellow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 	box_mesh = BoxMesh.new()
 	box_mesh.size = Vector3(0.95, 0.95, 0.95)
 
-	# Build boundaries and allocate scanning highlight pool
 	create_boundary_lines()
 	preallocate_yellow_grid()
-	
-	# Print initial 0% coverage stat
 	print_coverage_stats()
 
 func preallocate_yellow_grid() -> void:
@@ -65,17 +61,14 @@ func create_boundary_lines() -> void:
 	var thickness = boundary_thickness
 	
 	var edges = [
-		# X-parallel lines
 		[Vector3(0,0,0), Vector3(1,0,0)],
 		[Vector3(0,1,0), Vector3(1,1,0)],
 		[Vector3(0,0,1), Vector3(1,0,1)],
 		[Vector3(0,1,1), Vector3(1,1,1)],
-		# Y-parallel lines
 		[Vector3(0,0,0), Vector3(0,1,0)],
 		[Vector3(1,0,0), Vector3(1,1,0)],
 		[Vector3(0,0,1), Vector3(0,1,1)],
 		[Vector3(1,0,1), Vector3(1,1,1)],
-		# Z-parallel lines
 		[Vector3(0,0,0), Vector3(0,0,1)],
 		[Vector3(1,0,0), Vector3(1,0,1)],
 		[Vector3(0,1,0), Vector3(0,1,1)],
@@ -107,7 +100,7 @@ func create_boundary_lines() -> void:
 		var mesh_inst = MeshInstance3D.new()
 		mesh_inst.mesh = edge_mesh
 		mesh_inst.material_override = red_material
-		mesh_inst.global_position = (p1 + p2) * 0.5
+		mesh_inst.position = (p1 + p2) * 0.5
 		add_child(mesh_inst)
 
 func _process(_delta: float) -> void:
@@ -115,17 +108,15 @@ func _process(_delta: float) -> void:
 		_find_drone()
 		return
 
-	# Current grid coordinates
 	var drone_grid_pos = Vector3i(
 		floor(drone.global_position.x),
 		floor(drone.global_position.y),
 		floor(drone.global_position.z)
 	)
 
-	# Get the drone's current forward direction vector
-	var forward_dir = drone.global_transform.basis.z.normalized()
+	# Forward direction updated to match user requirements (+Z)
+	var forward_dir = -drone.global_transform.basis.z.normalized()
 
-	# Run updates if the drone moves to a new cell OR rotates significantly (~2.5 degrees)
 	var moved = drone_grid_pos != last_drone_grid_pos
 	var rotated = forward_dir.dot(last_drone_forward) < 0.999
 
@@ -166,7 +157,6 @@ func mark_yellow_zone_as_visited(center_pos: Vector3i, forward_dir: Vector3) -> 
 							spawn_permanent_trail_box(world_coord)
 							newly_visited = true
 
-	# Print stats only when the coverage percentage actually increases
 	if newly_visited:
 		print_coverage_stats()
 
@@ -198,14 +188,14 @@ func update_yellow_grid(center_pos: Vector3i, forward_dir: Vector3) -> void:
 		else:
 			mesh_inst.visible = false
 
-func print_coverage_stats() -> void:
+func get_coverage_percentage() -> float:
 	if total_cells_count <= 0.0:
-		return
-		
+		return 0.0
+	return (float(visited_cells.size()) / total_cells_count) * 100.0
+
+func print_coverage_stats() -> void:
+	var percentage = get_coverage_percentage()
 	var visited_count = visited_cells.size()
-	var percentage = (float(visited_count) / total_cells_count) * 100.0
-	
-	# Output the raw visited counts and the calculated coverage percentage
 	print("Coverage: %.4f%% | Cells Visited: %d / %d" % [percentage, visited_count, int(total_cells_count)])
 
 func is_within_bounds(coord: Vector3i) -> bool:

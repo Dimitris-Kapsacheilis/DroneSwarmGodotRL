@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=21 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
 [ext_resource type="Script" path="res://addons/godot_rl_agents/sync.gd" id="1_wjrew"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://scripts/rl_environment.gd" id="5_x3jkk"]
 [ext_resource type="Script" path="res://scripts/agents/drone_swarm_ai_controller.gd" id="6_h73wq"]
 [ext_resource type="PackedScene" uid="uid://bvag3gg81did5" path="res://assets/models/stavroupoli.glb" id="7_s7ayj"]
+[ext_resource type="Script" path="res://scripts/rl_bridge.gd" id="12_cpfqh"]
 [ext_resource type="Script" path="res://scripts/grid_manager.gd" id="12_fj23i"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3teta"]
@@ -127,3 +128,6 @@ visible = false
 
 [node name="GridManager" type="Node3D" parent="."]
 script = ExtResource("12_fj23i")
+
+[node name="RLBridge" type="Node3D" parent="."]
+script = ExtResource("12_cpfqh")
