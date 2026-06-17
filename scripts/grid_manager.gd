@@ -7,9 +7,9 @@ extends Node3D
 @export var camera_fov: float = 90.0
 @export var boundary_thickness: float = 2.0
 
-var visited_cells = {}   # Dict of {Vector3i: bool} to track flight history
-var trail_meshes = {}    # Dict of {Vector3i: MeshInstance3D} for permanent blue trail
-var yellow_meshes = {}   # Dict of {Vector3i: MeshInstance3D} for local yellow scanning area
+var visited_cells = {}   
+var trail_meshes = {}    
+var yellow_meshes = {}   
 
 var blue_material: StandardMaterial3D
 var yellow_material: StandardMaterial3D
@@ -22,7 +22,6 @@ var total_cells_count: float = 0.0
 func _ready() -> void:
 	total_cells_count = float(grid_size.x) * float(grid_size.y) * float(grid_size.z)
 
-	# Define materials
 	blue_material = StandardMaterial3D.new()
 	blue_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	blue_material.albedo_color = Color(0.0, 0.5, 1.0, 0.3)
@@ -39,6 +38,25 @@ func _ready() -> void:
 	create_boundary_lines()
 	preallocate_yellow_grid()
 	print_coverage_stats()
+
+# Clears the environment state on reset
+func reset_grid() -> void:
+	visited_cells.clear()
+	
+	# Delete all physical blue boxes from the scene
+	for coord in trail_meshes.keys():
+		var mesh_inst = trail_meshes[coord]
+		if is_instance_valid(mesh_inst):
+			mesh_inst.queue_free()
+	trail_meshes.clear()
+	
+	# Hide all yellow sensor meshes
+	for mesh_inst in yellow_meshes.values():
+		mesh_inst.visible = false
+		
+	last_drone_grid_pos = Vector3i(99999, 99999, 99999)
+	last_drone_forward = Vector3.ZERO
+	print("GridManager: Map has been reset for new episode.")
 
 func preallocate_yellow_grid() -> void:
 	var diameter = (yellow_radius * 2) + 1
@@ -100,7 +118,7 @@ func create_boundary_lines() -> void:
 		var mesh_inst = MeshInstance3D.new()
 		mesh_inst.mesh = edge_mesh
 		mesh_inst.material_override = red_material
-		mesh_inst.position = (p1 + p2) * 0.5
+		mesh_inst.global_position = (p1 + p2) * 0.5
 		add_child(mesh_inst)
 
 func _process(_delta: float) -> void:
@@ -114,8 +132,7 @@ func _process(_delta: float) -> void:
 		floor(drone.global_position.z)
 	)
 
-	# Forward direction updated to match user requirements (+Z)
-	var forward_dir = -drone.global_transform.basis.z.normalized()
+	var forward_dir = drone.global_transform.basis.z.normalized()
 
 	var moved = drone_grid_pos != last_drone_grid_pos
 	var rotated = forward_dir.dot(last_drone_forward) < 0.999

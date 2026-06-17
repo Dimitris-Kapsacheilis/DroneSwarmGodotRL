@@ -7,7 +7,6 @@ var server: TCPServer
 var connection: StreamPeerTCP
 var is_client_connected: bool = false
 
-# Dynamic getter: Finds the drone via its group, then locates the child "Navigator"
 var navigator: Node:
 	get:
 		var drones = get_tree().get_nodes_in_group("drone")
@@ -21,6 +20,8 @@ func _ready() -> void:
 	server = TCPServer.new()
 	if server.listen(port) == OK:
 		print("RL Server listening on port: ", port)
+	else:
+		printerr("RL Server failed to listen on port: ", port)
 
 func _process(_delta: float) -> void:
 	if not is_client_connected:
@@ -47,27 +48,42 @@ func _process_network_messages() -> void:
 func _handle_command(cmd: Dictionary) -> void:
 	var nav = navigator
 	if not is_instance_valid(nav):
-		printerr("RLBridge Error: No active drone or Navigator child node found in the scene.")
-		_send_error_response("Navigator node not found")
+		printerr("RLBridge Error: Active drone or Navigator child node was NOT found in the scene.")
+		_send_error_response("Active drone or Navigator child node was NOT found in the scene.")
 		return
 
 	match cmd.get("type"):
 		"action":
 			var coord = Vector3i(cmd["action"][0], cmd["action"][1], cmd["action"][2])
+			print("RLBridge: New target waypoint received -> ", coord)
 			nav.perform_action(coord)
 			
-			# Wait until the drone reaches the waypoint
+			var start_time = Time.get_ticks_msec()
+			var timeout_ms = 30000 
+			
 			while is_instance_valid(nav) and nav.has_target:
 				await get_tree().physics_frame
+				if Time.get_ticks_msec() - start_time >= timeout_ms:
+					print("RLBridge: Flight timeout (30s) reached. Ending step.")
+					nav.has_target = false
+					break
 				
 			if is_instance_valid(nav):
 				_send_step_data(nav)
+			else:
+				_send_error_response("Navigator became invalid during flight")
 			
 		"reset":
 			nav.reset_rl_stats()
+			
+			# Trigger the global grid clearance
+			if is_instance_valid(nav.grid_manager):
+				nav.grid_manager.reset_grid()
+				
 			# Teleport the drone back to origin (0.5, 0.5, 0.5)
 			if is_instance_valid(nav.drone):
 				nav.drone.global_position = Vector3(0.5, 0.5, 0.5) 
+				
 			await get_tree().physics_frame
 			_send_step_data(nav)
 
@@ -80,14 +96,15 @@ func _send_step_data(nav: Node) -> void:
 		"velocity": [obs["velocity"].x, obs["velocity"].y, obs["velocity"].z],
 		"coverage": obs["coverage"],
 		"reward": reward,
-		"done": obs["coverage"] >= 99.9
+		"done": obs["coverage"] >= 99.9,
+		"error": ""
 	}
 	
 	var json_string = JSON.stringify(response)
-	connection.put_utf8_string(json_string)
+	var packet = json_string.to_utf8_buffer()
+	connection.put_data(packet)
 
 func _send_error_response(message: String) -> void:
-	# Sends a safe error fallback packet to Python instead of closing the connection abruptly
 	var response = {
 		"position": [0.0, 0.0, 0.0],
 		"velocity": [0.0, 0.0, 0.0],
@@ -97,4 +114,5 @@ func _send_error_response(message: String) -> void:
 		"error": message
 	}
 	var json_string = JSON.stringify(response)
-	connection.put_utf8_string(json_string)
+	var packet = json_string.to_utf8_buffer()
+	connection.put_data(packet)

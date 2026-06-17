@@ -12,11 +12,13 @@ class GodotDroneEnv(gym.Env):
         # Grid dimensions (Must match your grid_size in Godot)
         self.grid_size = np.array([100, 100, 100], dtype=np.int32)
         
-        # Action space: Discrete 3D Grid coordinate (X, Y, Z) to target next
+        # Action space: Continuous float between -1.0 and 1.0 for (X, Y, Z)
+        # This is the standard, optimized format for PPO / neural networks
         self.action_space = spaces.Box(
-            low=np.array([0, 0, 0]), 
-            high=self.grid_size - 1, 
-            dtype=np.int32
+            low=-1.0, 
+            high=1.0, 
+            shape=(3,), 
+            dtype=np.float32
         )
         
         # Observation space: Position (3D), Velocity (3D), Coverage (1D)
@@ -31,16 +33,39 @@ class GodotDroneEnv(gym.Env):
         self.sock.connect((ip, port))
 
     def _get_response(self):
-        data = self.sock.recv(4096).decode('utf-8')
-        response = json.loads(data)
-        
-        obs = np.array([
-            response["position"][0], response["position"][1], response["position"][2],
-            response["velocity"][0], response["velocity"][1], response["velocity"][2],
-            response["coverage"]
-        ], dtype=np.float32)
-        
-        return obs, response["reward"], response["done"]
+        try:
+            data = self.sock.recv(4096).decode('utf-8')
+            if not data:
+                raise ConnectionError("Received empty byte packet from Godot.")
+                
+            response = json.loads(data)
+            
+            # Print warnings sent by the Godot Bridge
+            if "error" in response and response["error"] != "":
+                print(f"\n[Godot Warning]: {response['error']}")
+                print("Make sure your drone is spawned and has been added to the 'drone' group!\n")
+
+            obs = np.array([
+                response["position"][0], response["position"][1], response["position"][2],
+                response["velocity"][0], response["velocity"][1], response["velocity"][2],
+                response["coverage"]
+            ], dtype=np.float32)
+            
+            return obs, response["reward"], response["done"]
+            
+        except (ConnectionError, socket.error) as e:
+            print("\n" + "="*50)
+            print("ERROR: Connection with the Godot instance was lost.")
+            print("This usually means Godot crashed or was stopped.")
+            print("Please check the Godot Editor debugger/console window for errors.")
+            print("="*50 + "\n")
+            raise e
+        except json.JSONDecodeError as e:
+            print("\n" + "="*50)
+            print("ERROR: Received invalid data from Godot.")
+            print(f"Raw data received: '{data}'")
+            print("="*50 + "\n")
+            raise e
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -54,8 +79,11 @@ class GodotDroneEnv(gym.Env):
         return obs, info
 
     def step(self, action):
-        # Convert action floats to integers for grid mapping
-        act = action.astype(int).tolist()
+        # Scale the action from [-1.0, 1.0] to [0, grid_size - 1]
+        scaled_action = (action + 1.0) / 2.0 * (self.grid_size - 1)
+        act = np.clip(scaled_action, 0, self.grid_size - 1).astype(int).tolist()
+        
+        print(f"Current Waypoint Action: {act}")
         
         # Send target action coordinates
         msg = json.dumps({"type": "action", "action": act})
@@ -75,17 +103,16 @@ class GodotDroneEnv(gym.Env):
 # STABLE-BASELINES3 TRAINING EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    # 1. Run your Godot project first in the Editor so the port is open!
     print("Connecting to Godot instance...")
     env = GodotDroneEnv()
     
-    # 2. Define the PPO Agent
+    # Define the PPO Agent
     model = PPO("MlpPolicy", env, verbose=1, learning_rate=3e-4)
     
-    # 3. Start Training
+    # Start Training
     print("Starting Training...")
     model.learn(total_timesteps=100000)
     
-    # 4. Save the trained weight file
+    # Save the trained weight file
     model.save("drone_mapping_agent")
     print("Model Saved.")

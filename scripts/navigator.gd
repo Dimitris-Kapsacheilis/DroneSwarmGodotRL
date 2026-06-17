@@ -1,10 +1,9 @@
 extends Node3D
 
-@export var flight_speed: float = 10.0
+@export var flight_speed: float = 100.0
 @export var arrival_threshold: float = 0.5
-@export var rl_mode: bool = true 
+@export var rl_mode: bool = false 
 
-# Updated absolute path reference as requested
 @onready var grid_manager = get_node_or_null("/root/Swarm Test/GridManager")
 @onready var drone: Node3D = get_parent()
 
@@ -22,10 +21,15 @@ var line_inst: MeshInstance3D
 var line_mesh: ImmediateMesh
 
 func _ready() -> void:
-	print(drone)
 	randomize()
 	if is_instance_valid(drone):
 		last_position = drone.global_position
+		
+		# Automatically disable gravity and physics forces if the drone is a RigidBody3D
+		if drone is RigidBody3D:
+			drone.freeze = true
+			print("Navigator: Automatically froze RigidBody3D drone to prevent gravity fighting.")
+			
 	await get_tree().process_frame
 	setup_visualizers()
 
@@ -106,8 +110,12 @@ func get_observation() -> Dictionary:
 	if is_instance_valid(grid_manager):
 		coverage = grid_manager.get_coverage_percentage()
 
+	var drone_pos = Vector3.ZERO
+	if is_instance_valid(drone):
+		drone_pos = drone.global_position
+
 	return {
-		"position": drone.global_position,
+		"position": drone_pos,
 		"velocity": velocity,
 		"coverage": coverage
 	}
@@ -141,6 +149,9 @@ func choose_new_random_target() -> void:
 	perform_action(random_coord)
 
 func fly_toward_target(delta: float) -> void:
+	if not is_instance_valid(drone):
+		return
+		
 	var direction = (current_target_pos - drone.global_position)
 	var distance = direction.length()
 
@@ -152,12 +163,23 @@ func fly_toward_target(delta: float) -> void:
 			line_mesh.clear_surfaces()
 		return
 
-	# Smoothly rotate toward forward trajectory (+Z)
-	if direction.length() > 0.1:
-		var target_look = drone.global_position + direction.normalized()
-		var target_transform = drone.global_transform.looking_at(target_look, Vector3.UP)
-		drone.global_transform = drone.global_transform.interpolate_with(target_transform, 5.0 * delta)
+	# Deterministic 3D Rotation (+Z perfectly aligned to trajectory)
+	if direction.length() > 0.001:
+		var forward = direction.normalized()
+		var temp_up = Vector3.UP
+		
+		# Prevent gimbal lock division-by-zero when flying straight up or down
+		if abs(forward.y) > 0.99:
+			temp_up = Vector3.FORWARD
+		
+		# Compute right and actual up vectors manually
+		var right = temp_up.cross(forward).normalized()
+		var up = forward.cross(right).normalized()
+		
+		# Set the basis directly. This instantly aligns the drone's +Z to the target
+		drone.global_transform.basis = Basis(right, up, forward)
 
+	# Deterministic 3D Translation
 	drone.global_position = drone.global_position.move_toward(current_target_pos, flight_speed * delta)
 
 func draw_trajectory_line() -> void:

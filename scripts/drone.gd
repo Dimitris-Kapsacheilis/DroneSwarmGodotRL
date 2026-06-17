@@ -119,6 +119,7 @@ func set_boids_data(drones_list: Array[Drone]) -> void:
 	all_drones = drones_list
 
 func _physics_process(delta: float) -> void:
+	return
 	if target_waypoint != Vector3.INF:
 		_go_to_waypoint(delta)
 	elif leader != null and in_swarm_mode:
