@@ -7,11 +7,15 @@ This project is set up for Godot RL Agents with Stable-Baselines3 PPO.
 Start with centralized swarm control:
 
 - One `DroneSwarmAIController` is registered as the Godot RL Agents agent.
-- The action vector has `num_drones * 4` continuous values.
-- Each drone receives `[strafe, lift, forward, yaw]`.
+- The action vector has `num_drones * mission_task_count` continuous scores.
+- Each drone is assigned to the highest-scoring mission task.
 - The reward is shared and comes from `DroneSwarmRLEnvironment`.
+- Episodes train area coverage, target detection, target following, task distribution, and no-fly-zone avoidance.
 
-This is the best first step because it avoids multi-agent credit assignment while you tune physics, observations, rewards, and episode resets. After this learns basic waypoint flight, split into one AI controller per drone and move to RLlib multi-agent training.
+This is intentionally not low-level flight control. Drones move with the built-in
+`go_to_waypoint()` autopilot; the policy learns allocation and mission planning.
+After this learns stable centralized tasking, split into one planner per drone or
+move to RLlib multi-agent training.
 
 ## Step-by-Step Layout
 
@@ -82,7 +86,10 @@ tensorboard --logdir training\logs\sb3
   Godot RL Agents-compatible central controller. It implements `get_obs`, `get_reward`, `get_action_space`, `set_action`, `get_done`, `reset`, and `get_info`.
 
 - `scripts/rl_environment.gd`
-  Owns episode state, reset logic, reward shaping, normalized observations, and flat action dispatch.
+  Owns coverage cells, fog-of-war target memory, moving target state, task generation, reward shaping, normalized observations, no-fly-zone penalties, and task dispatch.
+
+- `scenes/drone.tscn`
+  The per-drone `AIController3D` child was removed so Godot RL Agents sees only the centralized swarm agent.
 
 - `training/train_sb3.py`
   PPO trainer using `StableBaselinesGodotEnv`.
@@ -95,30 +102,53 @@ tensorboard --logdir training\logs\sb3
 The current flat observation includes:
 
 - Remaining episode time.
-- Target waypoint index.
+- Coverage fraction.
+- Known target fraction.
+- Tracked target fraction.
+- No-fly-zone violation fraction.
 - For each drone:
-  - Relative target position.
-  - Relative leader position.
+  - Relative position.
   - Linear velocity.
-  - Angular velocity.
-  - Leader flag.
+  - Relative assigned-task waypoint.
+  - Vector to the nearest no-fly zone.
+  - Current assignment index.
+  - Normalized altitude.
+  - No-fly-zone violation flag.
+- For each coverage cell:
+  - Relative cell position.
+  - Covered flag.
+  - Recently visible flag.
+  - Blocked/no-fly flag.
+  - Assigned-drone count.
+- For each target:
+  - Relative search or last-known position.
+  - Known flag.
+  - Memory age.
+  - Tracked flag.
+  - Assigned-drone count.
 
 ## Reward
 
-The first reward is intentionally simple:
+The reward is shaped for mission allocation:
 
-- Negative distance from leader to target.
-- Penalty for followers drifting away from the desired follow distance.
-- Bonus for reaching the target.
+- Bonus for newly covered cells.
+- Dense reward for total coverage.
+- Bonus for detecting hidden targets.
+- Per-step reward for tracking moving targets.
+- Penalty for stale target memory.
+- Penalty for duplicate task concentration.
+- Penalty for assignment churn.
+- Penalty for entering no-fly zones.
+- Penalty for leaving the safe altitude corridor.
 - Penalty for out-of-bounds episodes.
-- Small velocity penalty to discourage unstable thrashing.
+- Completion bonus when coverage is complete and all targets are tracked.
 
-Tune this before increasing task complexity.
+Tune the exported values on `RL Environment` before increasing task complexity.
 
 ## Next Milestones
 
-1. Train centralized PPO until the leader reliably reaches the first waypoint.
-2. Randomize target waypoint and starting positions.
-3. Add obstacle/collision penalties.
-4. Add curriculum: first one drone, then two, then four.
-5. Convert to multi-agent RLlib only after centralized control is stable.
+1. Train centralized PPO until it covers the grid and keeps both targets tracked.
+2. Add curriculum: start with fewer cells/one target, then increase `coverage_columns`, `coverage_rows`, and `target_count`.
+3. Randomize target patrol centers and coverage areas.
+4. Replace nearest no-fly-zone center observations with ray or grid sensors if the city geometry becomes part of the reward.
+5. Convert to multi-agent RLlib only after centralized allocation is stable.

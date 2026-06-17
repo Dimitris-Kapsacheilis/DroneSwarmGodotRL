@@ -63,7 +63,7 @@ func get_reward() -> float:
 
 func get_action_space() -> Dictionary:
 	return {
-		"drone_actions": {
+		"task_assignments": {
 			"size": _action_size(),
 			"action_type": "continuous"
 		}
@@ -85,13 +85,15 @@ func get_info() -> Dictionary:
 		return {}
 
 	var drones := _environment._get_drones()
-	var target := _environment._target_position()
-	var leader: Drone = _environment.swarm_controller.current_leader if _environment.swarm_controller else null
 	return {
-		"is_success": leader != null and leader.global_position.distance_to(target) <= _environment.success_radius,
+		"is_success": _environment.mission_complete,
 		"episode": _environment.episode_index,
 		"elapsed_seconds": _environment.episode_time,
-		"drone_count": drones.size()
+		"drone_count": drones.size(),
+		"task_count": _environment.get_task_count(),
+		"coverage_fraction": _environment.get_coverage_fraction(),
+		"target_known_fraction": _environment.get_target_known_fraction(),
+		"target_tracked_fraction": _environment.get_target_tracked_fraction()
 	}
 
 func get_obs_space() -> Dictionary:
@@ -131,12 +133,15 @@ func zero_reward() -> void:
 func _action_size() -> int:
 	if _environment == null:
 		return 0
-	return _environment._get_drones().size() * 4
+	return _environment.get_assignment_action_size()
 
 func _extract_action_values(action: Variant) -> Array[float]:
 	var values: Array[float] = []
 
-	if action is Dictionary and action.has("drone_actions"):
+	if action is Dictionary and action.has("task_assignments"):
+		for value in action["task_assignments"]:
+			values.append(float(value))
+	elif action is Dictionary and action.has("drone_actions"):
 		for value in action["drone_actions"]:
 			values.append(float(value))
 	elif action is Array:

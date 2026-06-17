@@ -7,7 +7,7 @@ const Drone = preload("res://scripts/drone.gd")
 @export var spawn_height: float = 8.0
 @export var follow_distance: float = 7.0
 @export var follow_spread: float = 4.5
-
+@export var grid_manager: Node3D # Assign your GridManager here in the Inspector
 
 @export var waypoints: Array[Vector3] = [
 	Vector3(0, 12, 0),
@@ -94,11 +94,14 @@ func _ready() -> void:
 			0.0
 		)
 		drones.append(drone)
+		if grid_manager:
+			grid_manager.drone = drone
 
 	if drones.is_empty():
 		push_error("Swarm has no drones. Increase num_drones above zero.")
 		return
-
+	# Pass the reference directly to the GridManager
+	
 	_create_waypoint_markers()
 	set_leader(0)
 	set_formation("line")

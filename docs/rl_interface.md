@@ -5,11 +5,11 @@ The Godot-side RL API lives in `res://scripts/rl_environment.gd` and is attached
 ## Episode API
 
 - `reset(random_seed := 0) -> Dictionary`
-  Resets drone positions, clears control state, resets the swarm controller, and returns the first step result.
+  Resets drone positions, rebuilds mission state, clears coverage/fog/target memory, and returns the first step result.
 - `apply_actions(actions: Array) -> void`
-  Applies one normalized action per drone.
+  Helper for assigning task indices directly.
 - `apply_flat_action(action_values: Array) -> void`
-  Applies one flat `num_drones * 4` action vector from the centralized Godot RL Agents controller.
+  Applies the flat Godot RL Agents task-score vector from the centralized controller.
 - `step(actions: Array) -> Dictionary`
   Applies actions and returns the current observation, reward, done flag, episode id, and elapsed time. External trainers should call this once per physics frame or after awaiting `physics_frame`.
 - `collect_step_result() -> Dictionary`
@@ -21,20 +21,28 @@ The Godot-side RL API lives in `res://scripts/rl_environment.gd` and is attached
 
 ## Action Space
 
-Each drone action is four normalized values in `[-1, 1]`:
+Godot RL Agents sees one centralized continuous action named `task_assignments`.
+Its size is:
 
 ```text
-[strafe, lift, forward, yaw]
+num_drones * mission_task_count
 ```
 
-Dictionaries are also accepted:
+For each drone, the policy outputs one score per mission task. The environment
+uses the highest-scoring task as that drone's assignment. Tasks are generated from:
+
+- Area-coverage cells.
+- Moving target-follow tasks.
+- A rally task.
+
+The drone does not learn micro-control. Once assigned, it flies with the built-in
+`Drone.go_to_waypoint()` autopilot.
+
+Direct task-index dictionaries are also accepted by the environment helper:
 
 ```gdscript
 {
-	"strafe": 0.0,
-	"lift": 0.4,
-	"forward": 1.0,
-	"yaw": -0.2
+	"task": 3
 }
 ```
 
@@ -42,30 +50,51 @@ Dictionaries are also accepted:
 
 The structured observation dictionary contains:
 
-- `target` - The active waypoint as `[x, y, z]`.
-- `formation` - Current formation name.
-- `drones` - One dictionary per drone with id, position, rotation, linear velocity, angular velocity, leader flag, and waypoint state.
+- `mission` - Coverage, target-known, target-tracked, and task-count summary.
+- `coverage_cells` - Fog-of-war coverage cells with center, covered flag, recent visibility, blocked/no-fly flag, and assignment count.
+- `targets` - Sanitized target memory. True target positions are only exposed while visible.
+- `assignments` - Current task index per drone.
+- `drones` - One dictionary per drone with position, velocity, assignment, task waypoint, and no-fly-zone state.
 
-For Godot RL Agents training, `get_flat_observation()` returns a fixed-size numeric array for Stable-Baselines3.
+For Godot RL Agents training, `get_flat_observation()` returns a fixed-size
+numeric array for Stable-Baselines3. It includes:
+
+- Remaining time.
+- Coverage fraction.
+- Known target fraction.
+- Tracked target fraction.
+- No-fly-zone violation fraction.
+- Per-drone relative position, velocity, assigned-task vector, nearest no-fly-zone vector, assignment index, altitude, and violation flag.
+- Per-cell relative position, covered flag, recent visibility flag, blocked flag, and assignment count.
+- Per-target last-known/search position, known flag, memory age, tracked flag, and assignment count.
 
 ## Reward
 
-The default reward favors:
+The reward targets task allocation and distribution:
 
-- Reducing leader distance to the target waypoint.
-- Keeping followers near the configured follow distance.
-- Reaching the target within `success_radius`.
+- Bonus for newly covered area cells.
+- Dense reward for increasing total coverage.
+- Bonus for detecting hidden/moving targets.
+- Per-step reward for keeping targets tracked.
+- Penalty when known target memory goes stale.
+- Penalty for duplicate assignment concentration.
+- Penalty for excessive assignment churn.
+- Penalty for no-fly-zone and altitude violations.
+- Completion bonus when coverage is complete and all targets are tracked.
 
-It penalizes out-of-bounds episodes. Treat this as a baseline reward, not a finished research objective.
+It also penalizes out-of-bounds episodes.
 
 ## Done Conditions
 
 An episode ends when:
 
-- The leader reaches the target waypoint.
+- Coverage is complete and all targets are tracked.
 - `episode_seconds` is exceeded.
 - Any drone moves farther than `max_distance_from_origin`.
 
-## Next Training Step
+## Scene Integration
 
-Add a transport layer between Godot and Python, such as a TCP/WebSocket bridge, Godot RL Agents, or a custom headless runner. The existing API is shaped so that bridge only has to call `reset`, `apply_actions`, and `collect_step_result`.
+`res://scenes/drone.tscn` no longer registers its own `AIController3D` child. The
+single Godot RL Agents agent is `Drone Swarm AI Controller` in
+`res://scenes/swarm_test.tscn`, matching the custom-environment pattern from
+Godot RL Agents while keeping credit assignment centralized.

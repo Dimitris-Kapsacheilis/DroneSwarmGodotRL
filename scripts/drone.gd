@@ -19,44 +19,28 @@ var collective := 0.0
 var pitch := 0.0
 var roll := 0.0
 var yaw := 0.0
-var rl_control_enabled := false
-var rl_action := Vector4.ZERO
 
 const FOLLOW_STRENGTH := 14.0
 const SMOOTH := 6.0
-const RL_TRANSLATION_FORCE := 5.0
-const RL_VERTICAL_FORCE := 8.0
-const RL_YAW_TORQUE := 1.5
 
-@onready var zone_manager = get_node("/root/Swarm Test/NoFlyZoneManager")
-@onready var ai_controller = $AIController3D
+@onready var zone_manager = get_node_or_null("/root/Swarm Test/NoFlyZoneManager")
 
 func _ready() -> void:
-	ai_controller.init(self)
 	_apply_color()
 	
 func game_over():
-	ai_controller.done = true
-	ai_controller.needs_reset = true
+	pass
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	is_in_no_fly_zone()
-	if ai_controller.needs_reset:
-		ai_controller.reset()
-		return
-		
-	var movement : float
-	if ai_controller.heuristic == "human":
-		movement = Input.get_axis("rotate_anticlockwise", "rotate_clockwise")
-	else:
-		movement = ai_controller.move_action
 	
 func is_in_no_fly_zone() -> bool:
-	print(global_position)
+	if zone_manager == null:
+		return false
+
 	for zone in zone_manager.zones:
 		zone.update_drone_state(global_position)
 		if zone.contains_position(global_position):
-			print("NO FLY ZONE VIOLATION")
 			return true
 	return false	
 	
@@ -79,7 +63,6 @@ func _apply_color() -> void:
 	print("Drone ", drone_id + 1, " colored ", drone_color)
 
 func go_to_waypoint(pos: Vector3, waypoint_index: int = -1) -> void:
-	rl_control_enabled = false
 	target_waypoint = pos
 	assigned_waypoint_index = waypoint_index
 	leader = null
@@ -87,7 +70,6 @@ func go_to_waypoint(pos: Vector3, waypoint_index: int = -1) -> void:
 	in_swarm_mode = false
 
 func set_formation_target(offset: Vector3, new_leader: Drone, formation: String) -> void:
-	rl_control_enabled = false
 	formation_offset = offset
 	leader = new_leader
 	current_formation = formation
@@ -100,23 +82,6 @@ func clear_targets() -> void:
 	assigned_waypoint_index = -1
 	leader = null
 
-func set_rl_action(action: Vector4) -> void:
-	rl_control_enabled = true
-	target_waypoint = Vector3.INF
-	assigned_waypoint_index = -1
-	leader = null
-	in_swarm_mode = false
-	rl_action = Vector4(
-		clamp(action.x, -1.0, 1.0),
-		clamp(action.y, -1.0, 1.0),
-		clamp(action.z, -1.0, 1.0),
-		clamp(action.w, -1.0, 1.0)
-	)
-
-func clear_rl_control() -> void:
-	rl_control_enabled = false
-	rl_action = Vector4.ZERO
-
 func reset_flight_state(pos: Vector3, rot: Vector3 = Vector3.ZERO) -> void:
 	global_position = pos
 	global_rotation = rot
@@ -128,7 +93,6 @@ func reset_flight_state(pos: Vector3, rot: Vector3 = Vector3.ZERO) -> void:
 	yaw = 0.0
 	sleeping = false
 	clear_targets()
-	clear_rl_control()
 	is_leader = false
 
 func get_rl_observation() -> Dictionary:
@@ -147,9 +111,7 @@ func set_boids_data(drones_list: Array[Drone]) -> void:
 	all_drones = drones_list
 
 func _physics_process(delta: float) -> void:
-	if rl_control_enabled:
-		_rl_control(delta)
-	elif target_waypoint != Vector3.INF:
+	if target_waypoint != Vector3.INF:
 		_go_to_waypoint(delta)
 	elif leader != null and in_swarm_mode:
 		if current_formation == "boids":
@@ -236,20 +198,6 @@ func _keyboard_control(delta: float) -> void:
 	var global_force = global_transform.basis * local_force
 	apply_central_force(up_force + global_force)
 	apply_torque(Vector3.UP * yaw * 1.5)
-	angular_damp = 2.0
-	linear_damp = 0.1
-
-func _rl_control(delta: float) -> void:
-	roll = lerp(roll, rl_action.x, SMOOTH * delta)
-	collective = lerp(collective, rl_action.y, SMOOTH * delta)
-	pitch = lerp(pitch, rl_action.z, SMOOTH * delta)
-	yaw = lerp(yaw, rl_action.w, SMOOTH * delta)
-
-	var up_force = Vector3.UP * 9.8 * mass + Vector3.UP * collective * RL_VERTICAL_FORCE
-	var local_force = Vector3(roll * RL_TRANSLATION_FORCE, 0.0, pitch * RL_TRANSLATION_FORCE)
-	var global_force = global_transform.basis * local_force
-	apply_central_force(up_force + global_force)
-	apply_torque(Vector3.UP * yaw * RL_YAW_TORQUE)
 	angular_damp = 2.0
 	linear_damp = 0.1
 
