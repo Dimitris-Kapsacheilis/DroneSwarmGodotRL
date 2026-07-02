@@ -1,6 +1,8 @@
 class_name Drone
 extends RigidBody3D
 
+@onready var ai_controller = $AIController3D
+
 @export var drone_color: Color = Color.WHITE
 @export var drone_id: int = -1
 
@@ -24,8 +26,10 @@ const FOLLOW_STRENGTH := 14.0
 const SMOOTH := 6.0
 
 @onready var zone_manager = get_node_or_null("/root/Swarm Test/NoFlyZoneManager")
+@onready var grid_manager = get_node_or_null("/root/Swarm Test/GridManager")
 
-@export var grid_manager: Node3D # Drag your GridManager node here
+var coverage := 0.0
+
 @export var flight_speed: float = 10.0
 @export var arrival_threshold: float = 0.5
 
@@ -34,12 +38,19 @@ var has_target: bool = false
 
 
 func _ready() -> void:
+	ai_controller.init(self)
 	_apply_color()
 	randomize()
+	
 func game_over():
-	pass
+	ai_controller.done = true
+	ai_controller.needs_reset = true
 
 func _process(_delta: float) -> void:
+	coverage = grid_manager.get_coverage_percentage()
+	if coverage>80:
+		game_over()
+		print("DRONE RESET")
 	is_in_no_fly_zone()
 	
 func is_in_no_fly_zone() -> bool:
@@ -119,7 +130,20 @@ func set_boids_data(drones_list: Array[Drone]) -> void:
 	all_drones = drones_list
 
 func _physics_process(delta: float) -> void:
-	return
+	if ai_controller.needs_reset:
+		ai_controller.reset()
+		#drone.reset()
+		return
+	
+	#Change for dorne movement
+	#var movement : float
+	#if ai_controller.heuristic == "human":
+		#movement = Input.get_axis("rotate_anticlockwise", "rotate_clockwise")
+	#else:
+		#movement = ai_controller.move_action
+	#rotate_y(movement*delta*rotation_speed)
+
+	#return
 	if target_waypoint != Vector3.INF:
 		_go_to_waypoint(delta)
 	elif leader != null and in_swarm_mode:

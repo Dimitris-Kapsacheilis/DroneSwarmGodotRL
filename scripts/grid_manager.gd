@@ -2,7 +2,7 @@ extends Node3D
 
 @export var drone: Node3D
 
-@export var grid_size: Vector3i = Vector3i(100, 100, 100)
+@export var grid_size: Vector3i = Vector3i(50, 50, 50)
 @export var yellow_radius: int = 5
 @export var camera_fov: float = 90.0
 @export var boundary_thickness: float = 2.0
@@ -118,7 +118,7 @@ func create_boundary_lines() -> void:
 		var mesh_inst = MeshInstance3D.new()
 		mesh_inst.mesh = edge_mesh
 		mesh_inst.material_override = red_material
-		mesh_inst.global_position = (p1 + p2) * 0.5
+		mesh_inst.position = (p1 + p2) * 0.5
 		add_child(mesh_inst)
 
 func _process(_delta: float) -> void:

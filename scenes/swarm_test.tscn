@@ -1,7 +1,8 @@
-[gd_scene load_steps=20 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=21 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
-[ext_resource type="PackedScene" uid="uid://c7nf1r4taf5q5" path="res://scenes/drone.tscn" id="2_fuc2v"]
+[ext_resource type="Script" path="res://addons/godot_rl_agents/sync.gd" id="1_wjrew"]
+[ext_resource type="PackedScene" uid="uid://c7nf1r4taf5q5" path="res://scenes/drone.tscn" id="2_fl1ek"]
 [ext_resource type="Script" path="res://scripts/NoFlyZone.gd" id="3_63cna"]
 [ext_resource type="Script" path="res://scripts/camera_3d.gd" id="3_gull1"]
 [ext_resource type="ArrayMesh" uid="uid://xdonu5qvxahe" path="res://assets/models/uploads_files_2720101_BusGameMap.obj" id="4_4uwty"]
@@ -55,13 +56,9 @@ albedo_color = Color(0, 0, 0, 1)
 
 [node name="Swarm Controller" type="Node3D" parent="." node_paths=PackedStringArray("grid_manager")]
 script = ExtResource("1_hodql")
-drone_packed_scene = ExtResource("2_fuc2v")
+drone_packed_scene = ExtResource("2_fl1ek")
 num_drones = 1
-spawn_height = 5.0
-follow_distance = 3.0
-follow_spread = 2.0
 grid_manager = NodePath("../GridManager")
-waypoints = Array[Vector3]([Vector3(-120, 75, -110), Vector3(-70, 95, -75), Vector3(70, 90, -90), Vector3(140, 75, -20), Vector3(135, 95, 135)])
 
 [node name="NoFlyZone" type="Node3D" parent="."]
 visible = false
@@ -75,12 +72,6 @@ script = ExtResource("5_x3jkk")
 
 [node name="Drone Swarm AI Controller" type="Node3D" parent="."]
 script = ExtResource("6_h73wq")
-control_mode = null
-onnx_model_path = null
-reset_after = null
-action_repeat = null
-policy_name = null
-rl_environment_path = null
 
 [node name="Camera3D" type="Camera3D" parent="." node_paths=PackedStringArray("swarm_controller")]
 transform = Transform3D(1, 0, 0, 0, 0.939693, 0.34202, 0, -0.34202, 0.939693, 0, 11.961, 20.498)
@@ -127,3 +118,6 @@ script = ExtResource("12_fj23i")
 
 [node name="RLBridge" type="Node3D" parent="."]
 script = ExtResource("12_cpfqh")
+
+[node name="Sync" type="Node" parent="."]
+script = ExtResource("1_wjrew")

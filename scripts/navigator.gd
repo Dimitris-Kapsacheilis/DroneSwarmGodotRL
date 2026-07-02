@@ -2,7 +2,7 @@ extends Node3D
 
 @export var flight_speed: float = 100.0
 @export var arrival_threshold: float = 0.5
-@export var rl_mode: bool = false 
+@export var rl_mode: bool = true 
 
 @onready var grid_manager = get_node_or_null("/root/Swarm Test/GridManager")
 @onready var drone: Node3D = get_parent()

@@ -74,9 +74,10 @@ func _manual_camera_movement(delta: float) -> void:
 
 
 func _follow_leader_camera(delta: float) -> void:
-	if not swarm_controller or not swarm_controller.current_leader:
-		return
-	
+	if swarm_controller!= null:
+		if not swarm_controller or not swarm_controller.current_leader:
+			return
+		
 	var leader = swarm_controller.current_leader
 	
 	var behind = -leader.global_transform.basis.z * follow_distance

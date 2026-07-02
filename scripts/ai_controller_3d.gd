@@ -78,18 +78,18 @@ func get_done() -> bool:
 	if not is_instance_valid(grid_manager):
 		return false
 
-	var coverage = grid_manager.get_coverage_percentage()
-
-	if coverage >= 10.0:
-		print("DONE")
-		done = true
-		return true
-
-	if needs_reset:
-
-		print("TIMEOUT")
-		done = true
-		return true
+	#var coverage = grid_manager.get_coverage_percentage()
+#
+	#if coverage >= 50.0:
+		#print("DONE")
+		#done = true
+		#return true
+#
+	#if needs_reset:
+#
+		#print("TIMEOUT")
+		#done = true
+		#return true
 
 
 
@@ -125,6 +125,7 @@ func set_action(action) -> void:
 
 	# Ignore new actions while travelling
 	if navigator.has_target:
+		#print("HAS TARGET")
 		return
 
 	var act = []
@@ -176,7 +177,7 @@ func set_action(action) -> void:
 func reset() -> void:
 	print("RESET CALLED")
 
-	#super.reset()
+	super.reset()
 
 	done = false
 

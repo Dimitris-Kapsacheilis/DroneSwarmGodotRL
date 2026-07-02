@@ -1,7 +1,8 @@
-[gd_scene load_steps=6 format=4 uid="uid://c7nf1r4taf5q5"]
+[gd_scene load_steps=7 format=4 uid="uid://c7nf1r4taf5q5"]
 
 [ext_resource type="Script" path="res://scripts/drone.gd" id="1_6o0cx"]
 [ext_resource type="Script" path="res://scripts/navigator.gd" id="2_6ppu1"]
+[ext_resource type="Script" path="res://scripts/ai_controller_3d.gd" id="4_yimja"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_wak22"]
 size = Vector3(1.26172, 0.426697, 0.955933)
@@ -106,3 +107,7 @@ mesh = SubResource("ArrayMesh_icjr8")
 
 [node name="Navigator" type="Node3D" parent="."]
 script = ExtResource("2_6ppu1")
+
+[node name="AIController3D" type="Node3D" parent="."]
+script = ExtResource("4_yimja")
+reset_after = 500000
