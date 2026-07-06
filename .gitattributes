@@ -1,6 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
-
 # Large Godot assets should stay out of normal Git blobs. Run
 # `git lfs install` once before committing these patterns in a shared repo.
 *.blend filter=lfs diff=lfs merge=lfs -text
@@ -13,3 +12,7 @@
 *.jpeg filter=lfs diff=lfs merge=lfs -text
 *.webp filter=lfs diff=lfs merge=lfs -text
 *.tif filter=lfs diff=lfs merge=lfs -text
+*.app filter=lfs diff=lfs merge=lfs -text
+*.dmg filter=lfs diff=lfs merge=lfs -text
+*.pck filter=lfs diff=lfs merge=lfs -text
+**/MacOS/* filter=lfs diff=lfs merge=lfs -text

@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://ch2txnx0hyjur"
 path.s3tc="res://.godot/imported/Building_texture10.jpg-5b7ee8c9ecc27f0bed9f729ca87e7629.s3tc.ctex"
+path.etc2="res://.godot/imported/Building_texture10.jpg-5b7ee8c9ecc27f0bed9f729ca87e7629.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/Building_texture10.jpg"
-dest_files=["res://.godot/imported/Building_texture10.jpg-5b7ee8c9ecc27f0bed9f729ca87e7629.s3tc.ctex"]
+dest_files=["res://.godot/imported/Building_texture10.jpg-5b7ee8c9ecc27f0bed9f729ca87e7629.s3tc.ctex", "res://.godot/imported/Building_texture10.jpg-5b7ee8c9ecc27f0bed9f729ca87e7629.etc2.ctex"]
 
 [params]
 

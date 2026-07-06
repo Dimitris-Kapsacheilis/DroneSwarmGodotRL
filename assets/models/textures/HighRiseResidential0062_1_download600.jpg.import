@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dibcde0b6fi00"
 path.s3tc="res://.godot/imported/HighRiseResidential0062_1_download600.jpg-6da5788edc55a24d7f1f9f26d3374734.s3tc.ctex"
+path.etc2="res://.godot/imported/HighRiseResidential0062_1_download600.jpg-6da5788edc55a24d7f1f9f26d3374734.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/models/textures/HighRiseResidential0062_1_download600.jpg"
-dest_files=["res://.godot/imported/HighRiseResidential0062_1_download600.jpg-6da5788edc55a24d7f1f9f26d3374734.s3tc.ctex"]
+dest_files=["res://.godot/imported/HighRiseResidential0062_1_download600.jpg-6da5788edc55a24d7f1f9f26d3374734.s3tc.ctex", "res://.godot/imported/HighRiseResidential0062_1_download600.jpg-6da5788edc55a24d7f1f9f26d3374734.etc2.ctex"]
 
 [params]
 

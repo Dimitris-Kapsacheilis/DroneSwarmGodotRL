@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cx3bgtonh3d26"
 path.s3tc="res://.godot/imported/TexturesCom_MetalPlatesBare0158_10_seamless_S.jpg-b7156c7462b58731e8a9359db9b83889.s3tc.ctex"
+path.etc2="res://.godot/imported/TexturesCom_MetalPlatesBare0158_10_seamless_S.jpg-b7156c7462b58731e8a9359db9b83889.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/TexturesCom_MetalPlatesBare0158_10_seamless_S.jpg"
-dest_files=["res://.godot/imported/TexturesCom_MetalPlatesBare0158_10_seamless_S.jpg-b7156c7462b58731e8a9359db9b83889.s3tc.ctex"]
+dest_files=["res://.godot/imported/TexturesCom_MetalPlatesBare0158_10_seamless_S.jpg-b7156c7462b58731e8a9359db9b83889.s3tc.ctex", "res://.godot/imported/TexturesCom_MetalPlatesBare0158_10_seamless_S.jpg-b7156c7462b58731e8a9359db9b83889.etc2.ctex"]
 
 [params]
 

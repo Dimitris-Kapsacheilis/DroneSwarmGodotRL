@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bhpvvmw2dpaiy"
 path.s3tc="res://.godot/imported/TexturesCom_BuildingsHighRise0634_5_seamless_S.jpg-2286b74d4b8a675884f4029f1c5d0eff.s3tc.ctex"
+path.etc2="res://.godot/imported/TexturesCom_BuildingsHighRise0634_5_seamless_S.jpg-2286b74d4b8a675884f4029f1c5d0eff.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/textures/TexturesCom_BuildingsHighRise0634_5_seamless_S.jpg"
-dest_files=["res://.godot/imported/TexturesCom_BuildingsHighRise0634_5_seamless_S.jpg-2286b74d4b8a675884f4029f1c5d0eff.s3tc.ctex"]
+dest_files=["res://.godot/imported/TexturesCom_BuildingsHighRise0634_5_seamless_S.jpg-2286b74d4b8a675884f4029f1c5d0eff.s3tc.ctex", "res://.godot/imported/TexturesCom_BuildingsHighRise0634_5_seamless_S.jpg-2286b74d4b8a675884f4029f1c5d0eff.etc2.ctex"]
 
 [params]
 

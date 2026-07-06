@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cuxuc2pnrshhj"
 path.s3tc="res://.godot/imported/BuildingsHighRise0558_download600.jpg-be1e03fadf5bb6607312c7cf988a6f74.s3tc.ctex"
+path.etc2="res://.godot/imported/BuildingsHighRise0558_download600.jpg-be1e03fadf5bb6607312c7cf988a6f74.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/models/textures/BuildingsHighRise0558_download600.jpg"
-dest_files=["res://.godot/imported/BuildingsHighRise0558_download600.jpg-be1e03fadf5bb6607312c7cf988a6f74.s3tc.ctex"]
+dest_files=["res://.godot/imported/BuildingsHighRise0558_download600.jpg-be1e03fadf5bb6607312c7cf988a6f74.s3tc.ctex", "res://.godot/imported/BuildingsHighRise0558_download600.jpg-be1e03fadf5bb6607312c7cf988a6f74.etc2.ctex"]
 
 [params]
 

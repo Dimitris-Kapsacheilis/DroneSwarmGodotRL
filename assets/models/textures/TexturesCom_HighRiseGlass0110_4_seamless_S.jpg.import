@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://d0qluj24vcox4"
 path.s3tc="res://.godot/imported/TexturesCom_HighRiseGlass0110_4_seamless_S.jpg-d1f1c9f363f3cc7bd6837063c87e353c.s3tc.ctex"
+path.etc2="res://.godot/imported/TexturesCom_HighRiseGlass0110_4_seamless_S.jpg-d1f1c9f363f3cc7bd6837063c87e353c.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/models/textures/TexturesCom_HighRiseGlass0110_4_seamless_S.jpg"
-dest_files=["res://.godot/imported/TexturesCom_HighRiseGlass0110_4_seamless_S.jpg-d1f1c9f363f3cc7bd6837063c87e353c.s3tc.ctex"]
+dest_files=["res://.godot/imported/TexturesCom_HighRiseGlass0110_4_seamless_S.jpg-d1f1c9f363f3cc7bd6837063c87e353c.s3tc.ctex", "res://.godot/imported/TexturesCom_HighRiseGlass0110_4_seamless_S.jpg-d1f1c9f363f3cc7bd6837063c87e353c.etc2.ctex"]
 
 [params]
 
