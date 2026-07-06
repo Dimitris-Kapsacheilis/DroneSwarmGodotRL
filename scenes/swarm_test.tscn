@@ -57,7 +57,7 @@ albedo_color = Color(0, 0, 0, 1)
 [node name="Swarm Controller" type="Node3D" parent="." node_paths=PackedStringArray("grid_manager")]
 script = ExtResource("1_hodql")
 drone_packed_scene = ExtResource("2_fl1ek")
-num_drones = 1
+spawn_height = 0.0
 grid_manager = NodePath("../GridManager")
 
 [node name="NoFlyZone" type="Node3D" parent="."]

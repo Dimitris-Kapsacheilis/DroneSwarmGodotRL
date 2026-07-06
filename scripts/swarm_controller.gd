@@ -1,9 +1,9 @@
 extends Node3D
 
 const Drone = preload("res://scripts/drone.gd")
-
+var rng = RandomNumberGenerator.new()
 @export var drone_packed_scene: PackedScene
-@export var num_drones: int = 2
+@export var num_drones: int = 1
 @export var spawn_height: float = 8.0
 @export var follow_distance: float = 7.0
 @export var follow_spread: float = 4.5
@@ -101,7 +101,8 @@ func _ready() -> void:
 		push_error("Swarm has no drones. Increase num_drones above zero.")
 		return
 	# Pass the reference directly to the GridManager
-	
+	else :
+		reset_swarm_pos()
 	_create_waypoint_markers()
 	set_leader(0)
 	set_formation("line")
@@ -109,6 +110,18 @@ func _ready() -> void:
 	print("Swarm ready with ", drones.size(), " drones.")
 	print("I = toggle swarm/individual mode, TAB = toggle waypoint mode")
 	print("1-6 = select leader/drone, F1-F5 = assign waypoint")
+
+func reset_swarm_pos() -> void:
+	for drone in drones:
+		var i = 0
+		drone.global_position = Vector3(
+			rng.randf_range(0,grid_manager.grid_size.x),
+			rng.randf_range(0,grid_manager.grid_size.y),
+			rng.randf_range(0,grid_manager.grid_size.z)
+			)
+		
+	
+	
 
 func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed("toggle_waypoint"):

@@ -194,3 +194,4 @@ func draw_trajectory_line() -> void:
 
 func clamped(val: int, min_val: int, max_val: int) -> int:
 	return max(min_val, min(val, max_val))
+	

@@ -48,7 +48,7 @@ func game_over():
 
 func _process(_delta: float) -> void:
 	coverage = grid_manager.get_coverage_percentage()
-	if coverage>80:
+	if coverage>5:  # HERE IS THE DONE CONDITION
 		game_over()
 		print("DRONE RESET")
 	is_in_no_fly_zone()

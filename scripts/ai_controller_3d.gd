@@ -2,6 +2,7 @@ extends AIController3D
 
 @onready var grid_manager = get_node_or_null("/root/Swarm Test/GridManager")
 @onready var navigator = get_parent().get_node_or_null("Navigator")
+@onready var swarm_controller = get_parent().get_node_or_null("/root/Swarm Test/Swarm Controller")
 
 var episode_steps := 0
 var previous_coverage := 0.0
@@ -187,12 +188,14 @@ func reset() -> void:
 	if is_instance_valid(navigator):
 		navigator.reset_rl_stats()
 
-		if is_instance_valid(navigator.drone):
-			navigator.drone.global_position = Vector3(0.5,0.5,0.5)
+		#if is_instance_valid(navigator.drone):
+			#navigator.drone.global_position = Vector3(0.5,0.5,0.5)
 
 	if is_instance_valid(grid_manager):
 		grid_manager.reset_grid()
-
+		
+	if is_instance_valid(swarm_controller):
+		swarm_controller.reset_swarm_pos()
 
 
 
