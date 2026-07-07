@@ -2,7 +2,7 @@ extends Node3D
 
 @export var drone: Node3D
 
-@export var grid_size: Vector3i = Vector3i(50, 50, 50)
+@export var grid_size: Vector3i = Vector3i(30, 30, 30)
 @export var yellow_radius: int = 5
 @export var camera_fov: float = 90.0
 @export var boundary_thickness: float = 2.0
@@ -171,7 +171,7 @@ func mark_yellow_zone_as_visited(center_pos: Vector3i, forward_dir: Vector3) -> 
 					if is_inside_camera_frustum(offset, forward_dir, fov_threshold):
 						if not visited_cells.has(world_coord):
 							visited_cells[world_coord] = true
-							spawn_permanent_trail_box(world_coord)
+							#spawn_permanent_trail_box(world_coord)   # ACTIVATE THIS FOR BLUE TRAIL FOR VISITED NODES !!!!!!!
 							newly_visited = true
 
 	if newly_visited:
@@ -213,8 +213,7 @@ func get_coverage_percentage() -> float:
 func print_coverage_stats() -> void:
 	var percentage = get_coverage_percentage()
 	var visited_count = visited_cells.size()
-	print("Coverage: %.4f%% | Cells Visited: %d / %d" % [percentage, visited_count, int(total_cells_count)])
-
+	print_rich("[color=yellow]Percentage:[/color] [b][color=cyan]%.2f%%[/color][/b]" % percentage)
 func is_within_bounds(coord: Vector3i) -> bool:
 	return (coord.x >= 0 and coord.x < grid_size.x and
 			coord.y >= 0 and coord.y < grid_size.y and

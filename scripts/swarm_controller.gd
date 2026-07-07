@@ -114,10 +114,10 @@ func _ready() -> void:
 func reset_swarm_pos() -> void:
 	for drone in drones:
 		var i = 0
-		drone.global_position = Vector3(
-			rng.randf_range(0,grid_manager.grid_size.x),
-			rng.randf_range(0,grid_manager.grid_size.y),
-			rng.randf_range(0,grid_manager.grid_size.z)
+		drone.global_position = Vector3(0,0,0
+			#rng.randf_range(0,grid_manager.grid_size.x),
+			#rng.randf_range(0,grid_manager.grid_size.y),
+			#rng.randf_range(0,grid_manager.grid_size.z)
 			)
 		
 	

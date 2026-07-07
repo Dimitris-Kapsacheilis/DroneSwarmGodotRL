@@ -6,25 +6,26 @@ extends AIController3D
 
 var episode_steps := 0
 var previous_coverage := 0.0
-
+var coverage_threshold = 90
 
 func _ready() -> void:
 	super._ready()
 
-
+func _process(delta: float) -> void:
+	#return
+	print(get_reward())
 # =====================================================
 # OBSERVATIONS
 # =====================================================
 
 func get_obs() -> Dictionary:
+	var obs = [0.0, 0.0, 0.0,
+				0.0, 0.0, 0.0,
+				0.0]
 	if not is_instance_valid(navigator) or not is_instance_valid(navigator.drone):
 		return {
-			"obs": [
-				0.0, 0.0, 0.0,
-				0.0, 0.0, 0.0,
-				0.0
-			]
-		}
+		"obs": obs
+	}
 
 	var pos = navigator.drone.global_position
 	var vel = navigator.velocity
@@ -32,17 +33,15 @@ func get_obs() -> Dictionary:
 	var coverage := 0.0
 	if is_instance_valid(grid_manager):
 		coverage = grid_manager.get_coverage_percentage() / 100.0
-
-	return {
-		"obs": [
-			pos.x,
+	obs = [ pos.x,
 			pos.y,
 			pos.z,
 			vel.x,
 			vel.y,
 			vel.z,
-			coverage
-		]
+			coverage]
+	return {
+		"obs": obs
 	}
 
 
@@ -57,14 +56,16 @@ func get_reward() -> float:
 	var coverage = grid_manager.get_coverage_percentage() / 100.0
 
 	# Reward only newly discovered coverage
-	var reward = (coverage - previous_coverage) * 10.0
+	reward = (coverage - previous_coverage) * 100.0
 
 	# Small living penalty
 	reward -= 0.001
 
 	# Large completion bonus
-	if coverage >= 0.70:
-		reward += 50.0
+	if coverage >= coverage_threshold:
+		reward += 100.0
+		
+		print ("DOENEF")
 
 	previous_coverage = coverage
 
@@ -79,12 +80,14 @@ func get_done() -> bool:
 	if not is_instance_valid(grid_manager):
 		return false
 
-	#var coverage = grid_manager.get_coverage_percentage()
-#
-	#if coverage >= 50.0:
-		#print("DONE")
-		#done = true
-		#return true
+	var coverage = grid_manager.get_coverage_percentage()
+
+	if coverage >= coverage_threshold:
+		reward +=100
+		print("final reward",reward)
+		done = true
+		needs_reset=true
+		return true
 #
 	#if needs_reset:
 #
@@ -141,7 +144,8 @@ func set_action(action) -> void:
 
 	if act.size() < 3:
 		return
-
+	
+	#print(action , episode_steps)
 	episode_steps += 1
 
 	var target_x = lerp(
@@ -169,7 +173,7 @@ func set_action(action) -> void:
 	)
 
 	navigator.perform_action(target_coord)
-
+	#print(target_coord)
 
 # =====================================================
 # RESET

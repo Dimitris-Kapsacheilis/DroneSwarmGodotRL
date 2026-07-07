@@ -47,10 +47,6 @@ func game_over():
 	ai_controller.needs_reset = true
 
 func _process(_delta: float) -> void:
-	coverage = grid_manager.get_coverage_percentage()
-	if coverage>5:  # HERE IS THE DONE CONDITION
-		game_over()
-		print("DRONE RESET")
 	is_in_no_fly_zone()
 	
 func is_in_no_fly_zone() -> bool:
