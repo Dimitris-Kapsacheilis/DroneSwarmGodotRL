@@ -128,6 +128,8 @@ script = ExtResource("12_cpfqh")
 
 [node name="Sync" type="Node" parent="."]
 script = ExtResource("1_wjrew")
+action_repeat = 32
+speed_up = 32.0
 
 [node name="HUD" type="Control" parent="."]
 layout_mode = 3

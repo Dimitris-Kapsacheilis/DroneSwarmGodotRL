@@ -12,8 +12,9 @@ func _ready() -> void:
 	super._ready()
 
 func _process(delta: float) -> void:
-	#return
-	print(get_reward())
+	#print(episode_steps,":",get_reward())
+	return
+
 # =====================================================
 # OBSERVATIONS
 # =====================================================
@@ -44,7 +45,6 @@ func get_obs() -> Dictionary:
 		"obs": obs
 	}
 
-
 # =====================================================
 # REWARD
 # =====================================================
@@ -52,25 +52,34 @@ func get_obs() -> Dictionary:
 func get_reward() -> float:
 	if not is_instance_valid(grid_manager):
 		return 0.0
-
-	var coverage = grid_manager.get_coverage_percentage() / 100.0
-
-	# Reward only newly discovered coverage
-	reward = (coverage - previous_coverage) * 100.0
-
-	# Small living penalty
-	reward -= 0.001
-
-	# Large completion bonus
-	if coverage >= coverage_threshold:
-		reward += 100.0
 		
-		print ("DOENEF")
 
-	previous_coverage = coverage
+	var coverage = grid_manager.get_coverage_percentage() 
+	
+	if not navigator.has_target: 
+		# Reward only newly discovered coverage
+		reward = (coverage - previous_coverage) * 1
+		# Small living penalty
+		reward -= 1
+		# Large completion bonus
+		if coverage >= coverage_threshold:
+			reward += 100.0
+			print("EPISODE STEPS : ", episode_steps)
+			print ("DONE!!!!!!!!")
+			done = true
+			needs_reset=true
+		previous_coverage = coverage
+		print(
 
+	"Episode steps:", episode_steps,
+
+	" Physics frames:", Engine.get_physics_frames(),
+
+	" Time:", Time.get_ticks_msec()
+
+)
+		print("final step:",episode_steps,", sum reward : " ,reward)
 	return reward
-
 
 # =====================================================
 # TERMINATION
@@ -83,8 +92,6 @@ func get_done() -> bool:
 	var coverage = grid_manager.get_coverage_percentage()
 
 	if coverage >= coverage_threshold:
-		reward +=100
-		print("final reward",reward)
 		done = true
 		needs_reset=true
 		return true
@@ -129,13 +136,15 @@ func set_action(action) -> void:
 
 	# Ignore new actions while travelling
 	if navigator.has_target:
-		#print("HAS TARGET")
+		print("HAS TARGET")
+		episode_steps += 1
 		return
 
 	var act = []
 
 	if action is Dictionary:
 		if not action.has("flight_waypoint"):
+			print("no waypoint action")
 			return
 
 		act = action["flight_waypoint"]
@@ -143,6 +152,7 @@ func set_action(action) -> void:
 		act = action
 
 	if act.size() < 3:
+		print("no 3 size action")
 		return
 	
 	#print(action , episode_steps)

@@ -213,7 +213,7 @@ func get_coverage_percentage() -> float:
 func print_coverage_stats() -> void:
 	var percentage = get_coverage_percentage()
 	var visited_count = visited_cells.size()
-	print_rich("[color=yellow]Percentage:[/color] [b][color=cyan]%.2f%%[/color][/b]" % percentage)
+	#print_rich("[color=yellow]Percentage:[/color] [b][color=cyan]%.2f%%[/color][/b]" % percentage)
 func is_within_bounds(coord: Vector3i) -> bool:
 	return (coord.x >= 0 and coord.x < grid_size.x and
 			coord.y >= 0 and coord.y < grid_size.y and

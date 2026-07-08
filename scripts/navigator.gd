@@ -120,12 +120,7 @@ func get_observation() -> Dictionary:
 		"coverage": coverage
 	}
 
-func get_reward() -> float:
-	var coverage = 0.0
-	if is_instance_valid(grid_manager):
-		coverage = grid_manager.get_coverage_percentage()
-	
-	return float(coverage) - float(actions_taken)
+
 
 func reset_rl_stats() -> void:
 	actions_taken = 0
