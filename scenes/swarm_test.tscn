@@ -1,4 +1,4 @@
-[gd_scene load_steps=28 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=29 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
 [ext_resource type="Script" path="res://addons/godot_rl_agents/sync.gd" id="1_wjrew"]
@@ -19,6 +19,7 @@
 [ext_resource type="PackedScene" uid="uid://c3kb0oyop7cwy" path="res://scenes/static_air_obstacle.tscn" id="16_awipf"]
 [ext_resource type="PackedScene" uid="uid://dc1g0fyovrdy6" path="res://scenes/moving_air_obstacle.tscn" id="17_q8vtn"]
 [ext_resource type="PackedScene" uid="uid://dcglcyp7gvwi7" path="res://scenes/moving_ground_obstacle.tscn" id="18_mpqok"]
+[ext_resource type="Script" path="res://scripts/speedup.gd" id="20_nelkt"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3teta"]
 albedo_color = Color(0.517173, 0.251043, 0.0411181, 1)
@@ -61,6 +62,16 @@ albedo_color = Color(0, 0, 0, 1)
 
 [node name="Swarm Test" type="Node3D"]
 
+[node name="Sync" type="Node" parent="."]
+script = ExtResource("1_wjrew")
+
+[node name="SpeedUp" type="Node" parent="."]
+process_mode = 4
+script = ExtResource("20_nelkt")
+time_scale = 1.0
+physics_ticks_per_second = 360
+max_physics_steps_per_frame = 128
+
 [node name="Swarm Controller" type="Node3D" parent="." node_paths=PackedStringArray("grid_manager")]
 script = ExtResource("1_hodql")
 drone_packed_scene = ExtResource("2_fl1ek")
@@ -80,7 +91,7 @@ script = ExtResource("5_x3jkk")
 [node name="Drone Swarm AI Controller" type="Node3D" parent="."]
 script = ExtResource("6_h73wq")
 
-[node name="Camera3D" type="Camera3D" parent="." node_paths=PackedStringArray("swarm_controller")]
+[node name="DynamicCamera" type="Camera3D" parent="." node_paths=PackedStringArray("swarm_controller")]
 transform = Transform3D(1, 0, 0, 0, 0.939693, 0.34202, 0, -0.34202, 0.939693, 0, 11.961, 20.498)
 script = ExtResource("3_gull1")
 swarm_controller = NodePath("../Swarm Controller")
@@ -125,11 +136,6 @@ script = ExtResource("12_fj23i")
 
 [node name="RLBridge" type="Node3D" parent="."]
 script = ExtResource("12_cpfqh")
-
-[node name="Sync" type="Node" parent="."]
-script = ExtResource("1_wjrew")
-action_repeat = 32
-speed_up = 32.0
 
 [node name="HUD" type="Control" parent="."]
 layout_mode = 3
@@ -180,3 +186,6 @@ process_mode = 4
 visible = false
 
 [node name="MovingAirObstacle" parent="Obstacles/Moving/Air" instance=ExtResource("17_q8vtn")]
+
+[node name="StaticCamera" type="Camera3D" parent="."]
+transform = Transform3D(0.706687, 0.707526, 0, -0.707526, 0.706687, 0, 0, 0, 1, -698.869, 311.912, 146.784)

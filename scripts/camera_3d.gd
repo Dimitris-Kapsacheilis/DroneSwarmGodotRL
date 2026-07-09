@@ -3,13 +3,22 @@
 
 extends Camera3D
 
+# Define the available camera modes
+enum CameraMode {
+	FOLLOW,    # Smoothly follows behind the leader drone
+	MANUAL,    # Free-fly mode using WASD + mouse
+	STATIC     # Remains at a fixed position, tracking the leader with rotation
+}
+
 @export var swarm_controller: Node3D          # Drag your swarm root Node3D here
 @export var follow_distance: float = 25.0
 @export var height_offset: float = 12.0
 @export var smoothness: float = 5.0
 
-# Camera mode
-var manual_mode: bool = false
+# Exported so you can set the default starting mode in the Inspector
+@export var current_mode: CameraMode = CameraMode.STATIC
+
+# Camera rotation tracking for manual mode
 var yaw: float = 0.0
 var pitch: float = 0.0
 
@@ -17,41 +26,54 @@ func _ready() -> void:
 	current = true
 	far = 300.0
 	fov = 65.0
-	# Uncomment for nice background blur:
-	# dof_blur_far_enabled = true
-	# dof_blur_far_distance = 80.0
-	# dof_blur_far_transition = 30.0
+	
+	# Initialize mouse mode based on starting camera mode
+	_apply_mouse_mode()
 
 
 func _input(event: InputEvent) -> void:
-	if not manual_mode:
+	# Only capture mouse inputs if we are in free-fly manual mode
+	if current_mode != CameraMode.MANUAL:
 		return
 	
 	if event is InputEventMouseMotion:
 		yaw -= event.relative.x * 0.005
 		pitch -= event.relative.y * 0.005
-		pitch = clamp(pitch, -1.57, 1.57)  # prevent flipping over
+		pitch = clamp(pitch, -1.57, 1.57)  # Prevent flipping over
 		rotation = Vector3(pitch, yaw, 0.0)
 
 
 func _process(delta: float) -> void:
-	# === TOGGLE MANUAL / FOLLOW MODE (only once per press) ===
+	# === TOGGLE CAMERA MODES ===
 	if Input.is_action_just_pressed("toggle_camera_mode"):
-		manual_mode = not manual_mode
-		
-		if manual_mode:
+		# Cycle through modes: FOLLOW (0) -> MANUAL (1) -> STATIC (2) -> FOLLOW (0)
+		var next_mode_index = (int(current_mode) + 1) % 3
+		current_mode = next_mode_index as CameraMode
+		_apply_mouse_mode()
+	
+	# Execute logic depending on the active state
+	match current_mode:
+		CameraMode.MANUAL:
+			_manual_camera_movement(delta)
+		CameraMode.FOLLOW:
+			_follow_leader_camera(delta)
+		CameraMode.STATIC:
+			_static_camera_tracking(delta)
+
+
+func _apply_mouse_mode() -> void:
+	match current_mode:
+		CameraMode.MANUAL:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 			yaw = rotation.y
 			pitch = rotation.x
 			print("Camera: MANUAL FREE-FLY MODE (WASD + mouse look)")
-		else:
+		CameraMode.FOLLOW:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			print("Camera: FOLLOW MODE (auto tracks leader)")
-	
-	if manual_mode:
-		_manual_camera_movement(delta)
-	else:
-		_follow_leader_camera(delta)
+		CameraMode.STATIC:
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+			print("Camera: STATIC MODE (locked position, watching leader)")
 
 
 func _manual_camera_movement(delta: float) -> void:
@@ -68,20 +90,27 @@ func _manual_camera_movement(delta: float) -> void:
 	if Input.is_action_pressed("thrust_up"):     global_position += up      * move_speed   # Space
 	if Input.is_action_pressed("thrust_down"):   global_position -= up      * move_speed   # Ctrl
 	
-	# Optional: hold Shift for faster movement
+	# Hold Shift for faster movement
 	if Input.is_key_pressed(KEY_SHIFT):
 		global_position += (forward * move_speed * 2.0) if Input.is_action_pressed("pitch_up") else Vector3.ZERO
 
 
 func _follow_leader_camera(delta: float) -> void:
-	if swarm_controller!= null:
-		if not swarm_controller or not swarm_controller.current_leader:
-			return
+	if swarm_controller == null or not is_instance_valid(swarm_controller.current_leader):
+		return
 		
 	var leader = swarm_controller.current_leader
-	
 	var behind = -leader.global_transform.basis.z * follow_distance
 	var desired_pos = leader.global_position + behind + Vector3.UP * height_offset
 	
 	global_position = global_position.lerp(desired_pos, smoothness * delta)
 	look_at(leader.global_position + Vector3.UP * 2.0)
+
+
+func _static_camera_tracking(_delta: float) -> void:
+	# Keep the camera physically in place, but rotate it to look at the leader drone
+	if swarm_controller == null or not is_instance_valid(swarm_controller.current_leader):
+		return
+	position = Vector3(15,25,60)
+	var leader = swarm_controller.current_leader
+	look_at(Vector3(0,0,0))

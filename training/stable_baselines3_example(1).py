@@ -187,6 +187,7 @@ if args.env_path is None and args.viz:
     print("Info: Using --viz without --env_path set has no effect, in-editor training will always render.")
 
 env = StableBaselinesGodotEnv(
+    # env_path="/Users/jimycool/DroneSwarmGodotRL/Drone_Swarm",
     env_path=args.env_path,
     show_window=args.viz,
     seed=args.seed,

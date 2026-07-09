@@ -111,4 +111,4 @@ script = ExtResource("2_6ppu1")
 
 [node name="AIController3D" type="Node3D" parent="."]
 script = ExtResource("4_yimja")
-reset_after = 500000
+reset_after = 5000000

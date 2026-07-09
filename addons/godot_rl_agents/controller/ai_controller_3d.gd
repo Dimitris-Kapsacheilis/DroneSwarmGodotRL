@@ -82,8 +82,8 @@ func get_action() -> Array:
 
 func _physics_process(delta):
 	n_steps += 1
-	if n_steps > reset_after:
-		needs_reset = true
+	#if n_steps > reset_after:
+		#needs_reset = true
 
 
 func get_obs_space():

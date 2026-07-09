@@ -6,6 +6,7 @@ extends Node3D
 @export var yellow_radius: int = 5
 @export var camera_fov: float = 90.0
 @export var boundary_thickness: float = 2.0
+@export var local_search_radius: int = 11 # Limits the WFD search window around the drone
 
 var visited_cells = {}   
 var trail_meshes = {}    
@@ -18,6 +19,13 @@ var box_mesh: BoxMesh
 var last_drone_grid_pos: Vector3i = Vector3i(99999, 99999, 99999)
 var last_drone_forward: Vector3 = Vector3.ZERO
 var total_cells_count: float = 0.0
+
+# Directions for 3D neighbors (6-connectivity: Up, Down, Left, Right, Forward, Back)
+const DIRECTIONS_3D = [
+	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1)
+]
 
 func _ready() -> void:
 	total_cells_count = float(grid_size.x) * float(grid_size.y) * float(grid_size.z)
@@ -36,7 +44,7 @@ func _ready() -> void:
 	box_mesh.size = Vector3(0.95, 0.95, 0.95)
 
 	create_boundary_lines()
-	preallocate_yellow_grid()
+	#preallocate_yellow_grid()
 	print_coverage_stats()
 
 # Clears the environment state on reset
@@ -139,7 +147,7 @@ func _process(_delta: float) -> void:
 
 	if moved or rotated:
 		mark_yellow_zone_as_visited(drone_grid_pos, forward_dir)
-		update_yellow_grid(drone_grid_pos, forward_dir)
+		#update_yellow_grid(drone_grid_pos, forward_dir)
 		
 		last_drone_grid_pos = drone_grid_pos
 		last_drone_forward = forward_dir
@@ -214,12 +222,128 @@ func print_coverage_stats() -> void:
 	var percentage = get_coverage_percentage()
 	var visited_count = visited_cells.size()
 	#print_rich("[color=yellow]Percentage:[/color] [b][color=cyan]%.2f%%[/color][/b]" % percentage)
+
 func is_within_bounds(coord: Vector3i) -> bool:
 	return (coord.x >= 0 and coord.x < grid_size.x and
 			coord.y >= 0 and coord.y < grid_size.y and
 			coord.z >= 0 and coord.z < grid_size.z)
 
+## Evaluates whether a coordinate is within both the global grid bounds 
+## and the local bounding box centered on the drone.
+func is_within_local_bounds(coord: Vector3i, center_pos: Vector3i) -> bool:
+	return (
+		coord.x >= 0 and coord.x < grid_size.x and
+		coord.y >= 0 and coord.y < grid_size.y and
+		coord.z >= 0 and coord.z < grid_size.z and
+		abs(coord.x - center_pos.x) <= local_search_radius and
+		abs(coord.y - center_pos.y) <= local_search_radius and
+		abs(coord.z - center_pos.z) <= local_search_radius
+	)
+
 func _find_drone() -> void:
 	var drones = get_tree().get_nodes_in_group("drone")
 	if drones.size() > 0:
 		drone = drones[0]
+
+# ==============================================================================
+# WAVEFRONT FRONTIER DETECTOR (WFD) EXTENSION
+# ==============================================================================
+
+## Checks if a coordinate is a frontier cell.
+## A cell is a frontier if it has been visited (known free) and has at least 
+## one unvisited neighbor within the bounds of the grid.
+func is_frontier_cell(coord: Vector3i) -> bool:
+	if not is_within_bounds(coord) or not visited_cells.has(coord):
+		return false
+		
+	for dir in DIRECTIONS_3D:
+		var neighbor = coord + dir
+		if is_within_bounds(neighbor) and not visited_cells.has(neighbor):
+			return true
+	return false
+
+## Runs the WFD algorithm restricted to a local bounding box around the drone's position.
+## Returns an Array of Arrays, where each inner Array represents a cluster of frontier Vector3i coordinates.
+func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
+	var detected_frontiers: Array[Array] = []
+	
+	if not is_instance_valid(drone):
+		return detected_frontiers
+
+	var start_pos = Vector3i(
+		floor(drone.global_position.x),
+		floor(drone.global_position.y),
+		floor(drone.global_position.z)
+	)
+
+	# Safety fallback: if the drone hasn't marked its own starting point yet,
+	# we cannot safely evaluate the wavefront BFS from it.
+	if not visited_cells.has(start_pos):
+		return detected_frontiers
+
+	var visited_m = {} # Map search visited tracker
+	var visited_f = {} # Frontier search visited tracker
+
+	# Map Queue (Queue M) with pointer index to avoid pop_front() allocations
+	var queue_m: Array[Vector3i] = [start_pos]
+	var head_m: int = 0
+	visited_m[start_pos] = true
+
+	while head_m < queue_m.size():
+		var p = queue_m[head_m]
+		head_m += 1
+
+		if is_frontier_cell(p) and not visited_f.has(p):
+			# Found a new frontier point; start localized BFS inside the bounding box
+			var queue_f: Array[Vector3i] = [p]
+			var head_f: int = 0
+			var new_frontier: Array[Vector3i] = []
+			
+			visited_f[p] = true
+
+			while head_f < queue_f.size():
+				var q = queue_f[head_f]
+				head_f += 1
+
+				if is_frontier_cell(q):
+					new_frontier.append(q)
+					
+					for dir in DIRECTIONS_3D:
+						var w = q + dir
+						if is_within_local_bounds(w, start_pos) and not visited_f.has(w):
+							if is_frontier_cell(w):
+								queue_f.append(w)
+								visited_f[w] = true
+
+			# Append cluster if it passes noise threshold filter
+			if new_frontier.size() >= min_frontier_size:
+				detected_frontiers.append(new_frontier)
+
+			# Mark all points in this cluster as processed in the main map search
+			for cell in new_frontier:
+				visited_m[cell] = true
+
+		# Expand Map Search BFS to adjacent known free space within the local bounds
+		for dir in DIRECTIONS_3D:
+			var v = p + dir
+			if is_within_local_bounds(v, start_pos) and not visited_m.has(v):
+				if visited_cells.has(v): # Must be visited (known free) to propagate wavefront
+					queue_m.append(v)
+					visited_m[v] = true
+
+	return detected_frontiers
+
+## Extracts the geometric centers (centroids) of all valid frontier groups.
+## This is useful for RL observation inputs or target tracking.
+func get_frontier_centroids(min_frontier_size: int = 3) -> Array[Vector3]:
+	var clusters = find_frontiers(min_frontier_size)
+	var centroids: Array[Vector3] = []
+	
+	for cluster in clusters:
+		var sum: Vector3 = Vector3.ZERO
+		for cell in cluster:
+			# Translate from integer grid coordinate to voxel center position
+			sum += Vector3(cell) + Vector3(0.5, 0.5, 0.5)
+		centroids.append(sum / float(cluster.size()))
+		
+	return centroids
