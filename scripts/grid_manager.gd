@@ -6,9 +6,10 @@ extends Node3D
 @export var yellow_radius: int = 5
 @export var camera_fov: float = 90.0
 @export var boundary_thickness: float = 2.0
-@export var local_search_radius: int = 11 # Limits the WFD search window around the drone
+@export var local_search_radius: int = 11
 
 var visited_cells = {}   
+var blocked_cells = {}   
 var trail_meshes = {}    
 var yellow_meshes = {}   
 
@@ -20,7 +21,6 @@ var last_drone_grid_pos: Vector3i = Vector3i(99999, 99999, 99999)
 var last_drone_forward: Vector3 = Vector3.ZERO
 var total_cells_count: float = 0.0
 
-# Directions for 3D neighbors (6-connectivity: Up, Down, Left, Right, Forward, Back)
 const DIRECTIONS_3D = [
 	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
 	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
@@ -28,8 +28,6 @@ const DIRECTIONS_3D = [
 ]
 
 func _ready() -> void:
-	total_cells_count = float(grid_size.x) * float(grid_size.y) * float(grid_size.z)
-
 	blue_material = StandardMaterial3D.new()
 	blue_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	blue_material.albedo_color = Color(0.0, 0.5, 1.0, 0.3)
@@ -44,21 +42,48 @@ func _ready() -> void:
 	box_mesh.size = Vector3(0.95, 0.95, 0.95)
 
 	create_boundary_lines()
-	#preallocate_yellow_grid()
+	
+	# Wait one frame for dynamically spawned NFZs to complete their setup()
+	await get_tree().process_frame
+	initialize_grid_space()
+
+func initialize_grid_space() -> void:
+	blocked_cells.clear()
+	var nfz_nodes = _find_no_fly_zones()
+	
+	# DIAGNOSTIC DEBUG PRINTS
+	print("GridManager: Found %d NoFlyZone node(s) in the scene tree." % nfz_nodes.size())
+	for zone in nfz_nodes:
+		if not ("points" in zone and "min_height" in zone and "max_height" in zone):
+			push_error("GridManager Error: NoFlyZone node '%s' exists but does not store points, min_height, or max_height variables. Update your NoFlyZone.gd setup() function!" % zone.name)
+	
+	for x in range(grid_size.x):
+		for y in range(grid_size.y):
+			for z in range(grid_size.z):
+				var coord = Vector3i(x, y, z)
+				var cell_center = Vector3(float(x) + 0.5, float(y) + 0.5, float(z) + 0.5)
+				
+				for zone in nfz_nodes:
+					if _is_point_inside_zone(cell_center, zone):
+						blocked_cells[coord] = true
+						break
+						
+	var raw_total := grid_size.x * grid_size.y * grid_size.z
+	var blocked_count := blocked_cells.size()
+	total_cells_count = float(raw_total - blocked_count)
+	
+	print("GridManager: Initialization completed. Total: %d | Blocked: %d | Flyable: %d" % [raw_total, blocked_count, int(total_cells_count)])
 	print_coverage_stats()
 
-# Clears the environment state on reset
 func reset_grid() -> void:
 	visited_cells.clear()
 	
-	# Delete all physical blue boxes from the scene
 	for coord in trail_meshes.keys():
 		var mesh_inst = trail_meshes[coord]
 		if is_instance_valid(mesh_inst):
 			mesh_inst.queue_free()
 	trail_meshes.clear()
 	
-	# Hide all yellow sensor meshes
 	for mesh_inst in yellow_meshes.values():
 		mesh_inst.visible = false
 		
@@ -147,8 +172,6 @@ func _process(_delta: float) -> void:
 
 	if moved or rotated:
 		mark_yellow_zone_as_visited(drone_grid_pos, forward_dir)
-		#update_yellow_grid(drone_grid_pos, forward_dir)
-		
 		last_drone_grid_pos = drone_grid_pos
 		last_drone_forward = forward_dir
 
@@ -178,8 +201,9 @@ func mark_yellow_zone_as_visited(center_pos: Vector3i, forward_dir: Vector3) -> 
 				if is_within_bounds(world_coord):
 					if is_inside_camera_frustum(offset, forward_dir, fov_threshold):
 						if not visited_cells.has(world_coord):
+							if blocked_cells.has(world_coord):
+								print("CRITICAL: A blocked cell was marked as visited!")
 							visited_cells[world_coord] = true
-							#spawn_permanent_trail_box(world_coord)   # ACTIVATE THIS FOR BLUE TRAIL FOR VISITED NODES !!!!!!!
 							newly_visited = true
 
 	if newly_visited:
@@ -221,20 +245,16 @@ func get_coverage_percentage() -> float:
 func print_coverage_stats() -> void:
 	var percentage = get_coverage_percentage()
 	var visited_count = visited_cells.size()
-	#print_rich("[color=yellow]Percentage:[/color] [b][color=cyan]%.2f%%[/color][/b]" % percentage)
 
 func is_within_bounds(coord: Vector3i) -> bool:
 	return (coord.x >= 0 and coord.x < grid_size.x and
 			coord.y >= 0 and coord.y < grid_size.y and
-			coord.z >= 0 and coord.z < grid_size.z)
+			coord.z >= 0 and coord.z < grid_size.z and
+			not blocked_cells.has(coord))
 
-## Evaluates whether a coordinate is within both the global grid bounds 
-## and the local bounding box centered on the drone.
 func is_within_local_bounds(coord: Vector3i, center_pos: Vector3i) -> bool:
 	return (
-		coord.x >= 0 and coord.x < grid_size.x and
-		coord.y >= 0 and coord.y < grid_size.y and
-		coord.z >= 0 and coord.z < grid_size.z and
+		is_within_bounds(coord) and 
 		abs(coord.x - center_pos.x) <= local_search_radius and
 		abs(coord.y - center_pos.y) <= local_search_radius and
 		abs(coord.z - center_pos.z) <= local_search_radius
@@ -246,12 +266,56 @@ func _find_drone() -> void:
 		drone = drones[0]
 
 # ==============================================================================
+# NO-FLY ZONE UTILITIES (AABB Check Method using your exact variable names)
+# ==============================================================================
+
+func _find_no_fly_zones() -> Array:
+	var found: Array = []
+	var root = get_tree().current_scene
+	if root:
+		_find_no_fly_zones_recursive(root, found)
+	return found
+
+func _find_no_fly_zones_recursive(node: Node, found: Array) -> void:
+	if node is NoFlyZone:
+		found.append(node)
+	for child in node.get_children():
+		_find_no_fly_zones_recursive(child, found)
+
+# Evaluates whether a 3D point is within a specific No-Fly Zone
+func _is_point_inside_zone(point: Vector3, zone: Node) -> bool:
+	# Updated to match NoFlyZone's actual variables: polygon, min_altitude, max_altitude
+	if not ("polygon" in zone and "min_altitude" in zone and "max_altitude" in zone):
+		return false
+		
+	# Verify height range (Y axis)
+	if point.y < zone.min_altitude or point.y > zone.max_altitude:
+		return false
+		
+	# Safe Bounding-Box logic using 'polygon'
+	var points_array = zone.polygon
+	if points_array.size() == 0:
+		return false
+		
+	var min_x: float = points_array[0].x
+	var max_x: float = points_array[0].x
+	var min_z: float = points_array[0].y
+	var max_z: float = points_array[0].y
+	
+	for i in range(1, points_array.size()):
+		var p = points_array[i]
+		if p.x < min_x: min_x = p.x
+		elif p.x > max_x: max_x = p.x
+		if p.y < min_z: min_z = p.y
+		elif p.y > max_z: max_z = p.y
+		
+	# Check if point falls within the boundaries
+	return point.x >= min_x and point.x <= max_x and point.z >= min_z and point.z <= max_z
+	
+# ==============================================================================
 # WAVEFRONT FRONTIER DETECTOR (WFD) EXTENSION
 # ==============================================================================
 
-## Checks if a coordinate is a frontier cell.
-## A cell is a frontier if it has been visited (known free) and has at least 
-## one unvisited neighbor within the bounds of the grid.
 func is_frontier_cell(coord: Vector3i) -> bool:
 	if not is_within_bounds(coord) or not visited_cells.has(coord):
 		return false
@@ -262,8 +326,6 @@ func is_frontier_cell(coord: Vector3i) -> bool:
 			return true
 	return false
 
-## Runs the WFD algorithm restricted to a local bounding box around the drone's position.
-## Returns an Array of Arrays, where each inner Array represents a cluster of frontier Vector3i coordinates.
 func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
 	var detected_frontiers: Array[Array] = []
 	
@@ -276,15 +338,12 @@ func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
 		floor(drone.global_position.z)
 	)
 
-	# Safety fallback: if the drone hasn't marked its own starting point yet,
-	# we cannot safely evaluate the wavefront BFS from it.
 	if not visited_cells.has(start_pos):
 		return detected_frontiers
 
-	var visited_m = {} # Map search visited tracker
-	var visited_f = {} # Frontier search visited tracker
+	var visited_m = {} 
+	var visited_f = {} 
 
-	# Map Queue (Queue M) with pointer index to avoid pop_front() allocations
 	var queue_m: Array[Vector3i] = [start_pos]
 	var head_m: int = 0
 	visited_m[start_pos] = true
@@ -294,7 +353,6 @@ func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
 		head_m += 1
 
 		if is_frontier_cell(p) and not visited_f.has(p):
-			# Found a new frontier point; start localized BFS inside the bounding box
 			var queue_f: Array[Vector3i] = [p]
 			var head_f: int = 0
 			var new_frontier: Array[Vector3i] = []
@@ -315,26 +373,21 @@ func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
 								queue_f.append(w)
 								visited_f[w] = true
 
-			# Append cluster if it passes noise threshold filter
 			if new_frontier.size() >= min_frontier_size:
 				detected_frontiers.append(new_frontier)
 
-			# Mark all points in this cluster as processed in the main map search
 			for cell in new_frontier:
 				visited_m[cell] = true
 
-		# Expand Map Search BFS to adjacent known free space within the local bounds
 		for dir in DIRECTIONS_3D:
 			var v = p + dir
 			if is_within_local_bounds(v, start_pos) and not visited_m.has(v):
-				if visited_cells.has(v): # Must be visited (known free) to propagate wavefront
+				if visited_cells.has(v): 
 					queue_m.append(v)
 					visited_m[v] = true
 
 	return detected_frontiers
 
-## Extracts the geometric centers (centroids) of all valid frontier groups.
-## This is useful for RL observation inputs or target tracking.
 func get_frontier_centroids(min_frontier_size: int = 3) -> Array[Vector3]:
 	var clusters = find_frontiers(min_frontier_size)
 	var centroids: Array[Vector3] = []
@@ -342,7 +395,6 @@ func get_frontier_centroids(min_frontier_size: int = 3) -> Array[Vector3]:
 	for cluster in clusters:
 		var sum: Vector3 = Vector3.ZERO
 		for cell in cluster:
-			# Translate from integer grid coordinate to voxel center position
 			sum += Vector3(cell) + Vector3(0.5, 0.5, 0.5)
 		centroids.append(sum / float(cluster.size()))
 		

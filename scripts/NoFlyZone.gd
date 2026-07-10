@@ -111,6 +111,7 @@ func contains_position(pos: Vector3) -> bool:
 func update_drone_state(pos: Vector3):
 	drone_inside = contains_position(pos)
 	if drone_inside:
+		#print("INSIDE!!!!!!!!!")
 		# Violated state: Solid Red outlines, semi-transparent Red fill
 		mat.albedo_color = Color(1, 0, 0, 1)
 		box_mat.albedo_color = Color(1, 0, 0, 0.6)
@@ -141,30 +142,3 @@ func _point_in_polygon(point: Vector2) -> bool:
 			inside = !inside
 		j = i
 	return inside
-
-
-
-
-func _process(delta):
-	im.clear_surfaces()
-	im.surface_begin(Mesh.PRIMITIVE_LINES)
-	var n = polygon.size()
-	if n < 2:
-		return
-	for i in range(n):
-		var a2 = polygon[i]
-		var b2 = polygon[(i + 1) % n]
-		var a_bottom = Vector3(a2.x, min_altitude, a2.y)
-		var b_bottom = Vector3(b2.x, min_altitude, b2.y)
-		var a_top = Vector3(a2.x, max_altitude, a2.y)
-		var b_top = Vector3(b2.x, max_altitude, b2.y)
-		# bottom loop
-		im.surface_add_vertex(a_bottom)
-		im.surface_add_vertex(b_bottom)
-		# top loop
-		im.surface_add_vertex(a_top)
-		im.surface_add_vertex(b_top)
-		# vertical edges
-		im.surface_add_vertex(a_bottom)
-		im.surface_add_vertex(a_top)
-	im.surface_end()

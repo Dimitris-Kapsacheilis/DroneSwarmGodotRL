@@ -30,8 +30,6 @@ const SMOOTH := 6.0
 
 var coverage := 0.0
 
-@export var flight_speed: float = 10.0
-@export var arrival_threshold: float = 0.5
 
 var current_target_pos: Vector3 = Vector3.ZERO
 var has_target: bool = false
@@ -52,7 +50,6 @@ func _process(_delta: float) -> void:
 func is_in_no_fly_zone() -> bool:
 	if zone_manager == null:
 		return false
-
 	for zone in zone_manager.zones:
 		zone.update_drone_state(global_position)
 		if zone.contains_position(global_position):
