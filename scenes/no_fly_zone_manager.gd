@@ -1,7 +1,7 @@
 extends Node3D
 
 # Configuration options editable in the Inspector
-@export var num_zones: int = 4
+@export var num_zones: int = 3
 @export var map_area: Rect2 = Rect2(0, 0, 30, 30) # Bounds for generation
 @export var min_zone_size: float = 3.0
 @export var max_zone_size: float = 12.0
@@ -9,7 +9,7 @@ extends Node3D
 @export var max_height: float = 30.0
 
 # The clearance width required for the drone to pass through (e.g., 1.0 for a 1x1x1 drone)
-@export var drone_clearance: float = 1.0
+@export var drone_clearance: float = 4.0
 
 var zones: Array[NoFlyZone] = []
 

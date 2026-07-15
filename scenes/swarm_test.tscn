@@ -1,4 +1,4 @@
-[gd_scene load_steps=29 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=30 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
 [ext_resource type="Script" path="res://addons/godot_rl_agents/sync.gd" id="1_wjrew"]
@@ -12,6 +12,7 @@
 [ext_resource type="PackedScene" uid="uid://bvag3gg81did5" path="res://assets/models/stavroupoli.glb" id="7_s7ayj"]
 [ext_resource type="Script" path="res://scripts/rl_bridge.gd" id="12_cpfqh"]
 [ext_resource type="Script" path="res://scripts/grid_manager.gd" id="12_fj23i"]
+[ext_resource type="Script" path="res://scripts/grid_logger.gd" id="13_fes1f"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="13_ihgyo"]
 [ext_resource type="Script" path="res://scripts/obstacles.gd" id="14_srhl7"]
 [ext_resource type="Script" path="res://scripts/moving_obstacles.gd" id="15_2mx36"]
@@ -64,6 +65,8 @@ albedo_color = Color(0, 0, 0, 1)
 
 [node name="Sync" type="Node" parent="."]
 script = ExtResource("1_wjrew")
+action_repeat = 16
+speed_up = 4.0
 
 [node name="SpeedUp" type="Node" parent="."]
 process_mode = 4
@@ -131,8 +134,12 @@ surface_material_override/0 = SubResource("StandardMaterial3D_c4yth")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39.5602, 0, 59.0571)
 visible = false
 
-[node name="GridManager" type="Node3D" parent="."]
+[node name="GridManager" type="Node3D" parent="." node_paths=PackedStringArray("grid_logger")]
 script = ExtResource("12_fj23i")
+grid_logger = NodePath("GridLogger")
+
+[node name="GridLogger" type="Node" parent="GridManager"]
+script = ExtResource("13_fes1f")
 
 [node name="RLBridge" type="Node3D" parent="."]
 script = ExtResource("12_cpfqh")
@@ -186,6 +193,3 @@ process_mode = 4
 visible = false
 
 [node name="MovingAirObstacle" parent="Obstacles/Moving/Air" instance=ExtResource("17_q8vtn")]
-
-[node name="StaticCamera" type="Camera3D" parent="."]
-transform = Transform3D(0.706687, 0.707526, 0, -0.707526, 0.706687, 0, 0, 0, 1, -698.869, 311.912, 146.784)

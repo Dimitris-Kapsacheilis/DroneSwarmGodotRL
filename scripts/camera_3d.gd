@@ -9,6 +9,7 @@ enum CameraMode {
 	MANUAL,    # Free-fly mode using WASD + mouse
 	STATIC     # Remains at a fixed position, tracking the leader with rotation
 }
+@onready var grid_manager = get_node_or_null("/root/Swarm Test/GridManager")
 
 @export var swarm_controller: Node3D          # Drag your swarm root Node3D here
 @export var follow_distance: float = 25.0
@@ -108,9 +109,20 @@ func _follow_leader_camera(delta: float) -> void:
 
 
 func _static_camera_tracking(_delta: float) -> void:
-	# Keep the camera physically in place, but rotate it to look at the leader drone
-	if swarm_controller == null or not is_instance_valid(swarm_controller.current_leader):
-		return
-	position = Vector3(15,25,60)
-	var leader = swarm_controller.current_leader
-	look_at(Vector3(0,0,0))
+	projection = Camera3D.PROJECTION_ORTHOGONAL
+	size = grid_manager.grid_size.y*1.05 # Adjust this value to zoom in or out of the 30x30 area
+	# Horizontal center of the 30x30 grid (0 to 30 range, so center is 15)
+	var grid_center_x: float = grid_manager.grid_size.x/2
+	var grid_center_z: float = grid_manager.grid_size.z/2
+	
+	# Position the camera well above the top boundary of the grid (Y = 30)
+	var camera_height: float = grid_manager.grid_size.y*1.8
+	
+	position = Vector3(grid_center_x, camera_height, grid_center_z)
+	
+	# Target the center point on the ground level of the grid
+	var target_position = Vector3(grid_center_x, 0.0, grid_center_z)
+	
+	# Since looking straight down is parallel to the Y-axis, 
+	# we use Vector3.FORWARD as the temporary 'UP' vector to prevent camera flipping.
+	look_at(target_position, Vector3.FORWARD)

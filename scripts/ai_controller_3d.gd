@@ -5,19 +5,20 @@ extends AIController3D
 @onready var swarm_controller = get_parent().get_node_or_null("/root/Swarm Test/Swarm Controller")
 
 @export var max_tracked_frontiers: int = 3
-@export var max_action_radius: float = 10.0 # Maximum radius in grid units for the next waypoint
+@onready var max_action_radius: float =grid_manager.local_search_radius-1 #15.0 # Maximum radius in grid units for the next waypoint
 
 # Scaling constants for clean normalization
 @export var max_velocity_reference: float = 5.0     # Expected max speed of the drone
 @export var max_distance_reference: float = 30.0    # Distance ceiling for NFZ observations
-@export var completion_bonus: float = 10.0          # Normalized from 100.0
-@export var nfz_violation_penalty: float = 5.0      # Normalized from 100.0
+@export var completion_bonus: float = 10.0          
+@export var nfz_violation_penalty: float = 5.0      
 
 var cached_centroids: Array = []
 var _cached_nfz_nodes: Array = [] 
 var actions_taken := 0
 var previous_coverage := 0.0
 var coverage_threshold = 95
+var violated := false
 
 func _ready() -> void:
 	super._ready()
@@ -25,8 +26,18 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	return
 
+# Monitors position on every physics frame to catch high-speed violations
+func _physics_process(_delta: float) -> void:
+	if done or violated:
+		return
+		
+	if is_instance_valid(navigator) and is_instance_valid(navigator.drone):
+		if _is_inside_any_nfz(navigator.drone.global_position):
+			violated = true
+			print("NFZ Violation registered in physics frame!")
+
 # =====================================================
-# OBSERVATIONS (All Normalized to [-1, 1] or [0, 1])
+# OBSERVATIONS
 # =====================================================
 
 func get_obs() -> Dictionary:
@@ -38,7 +49,7 @@ func get_obs() -> Dictionary:
 		0.0, 0.0, 0.0, # Frontier 1 relative
 		0.0, 0.0, 0.0, # Frontier 2 relative
 		0.0, 0.0, 0.0, # Frontier 3 relative
-		1.0, 1.0, 1.0  # Normalized distances to NFZ (1.0 means safe/unseen)
+		1.0, 1.0, 1.0  # Normalized distances to NFZ
 	]
 	
 	if not is_instance_valid(navigator) or not is_instance_valid(navigator.drone) or not is_instance_valid(grid_manager):
@@ -48,17 +59,17 @@ func get_obs() -> Dictionary:
 	var vel = navigator.velocity
 	var grid_limits = Vector3(grid_manager.grid_size)
 
-	# 1. Normalize Position to [0, 1] based on grid size
+	# Normalize Position to [0, 1] based on grid size
 	var norm_pos_x = clampf(pos.x / grid_limits.x, 0.0, 1.0)
 	var norm_pos_y = clampf(pos.y / grid_limits.y, 0.0, 1.0)
 	var norm_pos_z = clampf(pos.z / grid_limits.z, 0.0, 1.0)
 
-	# 2. Normalize Velocity to [-1, 1] using max reference speed
+	# Normalize Velocity to [-1, 1] using max reference speed
 	var norm_vel_x = clampf(vel.x / max_velocity_reference, -1.0, 1.0)
 	var norm_vel_y = clampf(vel.y / max_velocity_reference, -1.0, 1.0)
 	var norm_vel_z = clampf(vel.z / max_velocity_reference, -1.0, 1.0)
 
-	# 3. Coverage is already naturally [0, 1]
+	# Coverage is already naturally [0, 1]
 	var coverage = grid_manager.get_coverage_percentage() / 100.0
 		
 	obs = [ 
@@ -67,7 +78,7 @@ func get_obs() -> Dictionary:
 		coverage
 	]
 	
-	# 4. Normalize Frontier observations to [-1, 1] based on local search window
+	# Normalize Frontier observations to [-1, 1] based on local search window
 	var frontier_obs: Array[float] = []
 	var centroids: Array = []
 	
@@ -85,7 +96,6 @@ func get_obs() -> Dictionary:
 	for i in range(max_tracked_frontiers):
 		if i < centroids.size():
 			var rel_vector = centroids[i] - pos
-			# Scale and clamp relative distance to standard [-1, 1]
 			frontier_obs.append(clampf(rel_vector.x / search_radius, -1.0, 1.0))
 			frontier_obs.append(clampf(rel_vector.y / search_radius, -1.0, 1.0))
 			frontier_obs.append(clampf(rel_vector.z / search_radius, -1.0, 1.0))
@@ -96,7 +106,7 @@ func get_obs() -> Dictionary:
 			
 	obs.append_array(frontier_obs)
 	
-	# 5. Normalize NFZ distances to [0, 1]
+	# Normalize NFZ distances to [0, 1]
 	var nfz_distances: Array[float] = []
 	var nfz_nodes = _get_nfz_nodes()
 	
@@ -112,11 +122,10 @@ func get_obs() -> Dictionary:
 	for i in range(3):
 		if i < distance_mappings.size():
 			var raw_dist = distance_mappings[i].distance
-			# Maps raw distance (0 to 30+) to normalized [0, 1]
 			var norm_dist = clampf(raw_dist / max_distance_reference, 0.0, 1.0)
 			nfz_distances.append(norm_dist)
 		else:
-			nfz_distances.append(1.0) # 1.0 represents the safest (infinite) distance limit
+			nfz_distances.append(1.0) 
 
 	obs.append_array(nfz_distances)
 	
@@ -134,8 +143,15 @@ func get_reward() -> float:
 
 	var coverage = grid_manager.get_coverage_percentage() 
 	
+	# Apply immediate penalty if a violation was registered during movement
+	if violated:
+		reward = -nfz_violation_penalty
+		done = true
+		needs_reset = true
+		return reward
+	
 	if not navigator.has_target: 
-		# 1. Reward newly discovered coverage (Value scaled from 2.0 down to 1.0 for range control)
+		# 1. Reward newly discovered coverage
 		reward = (coverage - previous_coverage) * 1.0
 		
 		# 2. Living penalty
@@ -144,14 +160,6 @@ func get_reward() -> float:
 		# 3. Frontier Proximity Reward
 		if is_instance_valid(navigator.drone):
 			var pos = navigator.drone.global_position
-			
-			# Check for immediate NFZ violation
-			if _is_inside_any_nfz(pos):
-				reward -= nfz_violation_penalty
-				done = true
-				needs_reset = true
-				return reward
-			
 			var centroids = grid_manager.get_frontier_centroids(3)
 			if centroids.size() > 0:
 				var closest_dist = INF
@@ -160,7 +168,6 @@ func get_reward() -> float:
 					if d < closest_dist:
 						closest_dist = d
 				
-				# Normalizes shaping bonus to stay strictly between [0.0, 0.5]
 				var proximity_shaping = 0.5 / (1.0 + closest_dist)
 				reward += proximity_shaping
 		
@@ -190,14 +197,13 @@ func get_done() -> bool:
 		needs_reset = true
 		return true
 
-	# Check for termination due to NFZ violation
-	if is_instance_valid(navigator) and is_instance_valid(navigator.drone):
-		if _is_inside_any_nfz(navigator.drone.global_position):
-			print("AGENT PENALIZED: Entered No-Fly Zone!")
-			print("Steps:",n_steps," ,percentage: " ,coverage,"%%")
-			done = true
-			needs_reset = true
-			return true
+	# Terminate if the physics-monitoring loop flags an entry
+	if violated:
+		print("AGENT TERMINATED: Entered No-Fly Zone!")
+		print("EPISODE STEPS : ", n_steps ," , ACTIONS TAKEN : " , actions_taken, " , PERCENTAGE : ",coverage)
+		done = true
+		needs_reset = true
+		return true
 
 	return false
 
@@ -277,8 +283,44 @@ func set_action(action) -> void:
 		clampi(roundi(target_grid_pos.y), 0, grid_manager.grid_size.y - 1),
 		clampi(roundi(target_grid_pos.z), 0, grid_manager.grid_size.z - 1)
 	)
+
+	# --- RANDOM RE-SAMPLING LOOP ---
+	# If the chosen waypoint is blocked, search for a random free cell in the action range
+	if not grid_manager.is_within_bounds(target_coord):
+		var max_attempts := 100
+		var found_free_cell := false
+		
+		for attempt in range(max_attempts):
+			# Generate a random unit vector on a sphere
+			var rand_direction = Vector3(
+				randf_range(-1.0, 1.0),
+				randf_range(-1.0, 1.0),
+				randf_range(-1.0, 1.0)
+			).normalized()
+			
+			# Generate a random distance up to the maximum action radius
+			var rand_distance = randf_range(0.0, max_action_radius)
+			var rand_offset = rand_direction * rand_distance
+			var candidate_pos = Vector3(current_grid_pos) + rand_offset
+			
+			var candidate_coord = Vector3i(
+				clampi(roundi(candidate_pos.x), 0, grid_manager.grid_size.x - 1),
+				clampi(roundi(candidate_pos.y), 0, grid_manager.grid_size.y - 1),
+				clampi(roundi(candidate_pos.z), 0, grid_manager.grid_size.z - 1)
+			)
+			
+			# Accept the random coordinate if it is valid and free
+			if grid_manager.is_within_bounds(candidate_coord):
+				target_coord = candidate_coord
+				found_free_cell = true
+				break
+				
+		if not found_free_cell:
+			# Fallback to current position if no valid space is generated (keeps the drone safe)
+			target_coord = current_grid_pos
+	# -------------------------------
+
 	navigator.perform_action(target_coord)
-	
 
 # =====================================================
 # RESET
@@ -290,6 +332,7 @@ func reset() -> void:
 	super.reset()
 	needs_reset = false
 	done = false
+	violated = false
 	actions_taken = 0
 	previous_coverage = 0.0
 	n_steps = 0

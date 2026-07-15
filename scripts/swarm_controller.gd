@@ -10,11 +10,11 @@ var rng = RandomNumberGenerator.new()
 @export var grid_manager: Node3D # Assign your GridManager here in the Inspector
 
 @export var waypoints: Array[Vector3] = [
-	Vector3(0, 12, 0),
-	Vector3(20, 18, -30),
-	Vector3(-25, 15, 25),
-	Vector3(35, 22, 10),
-	Vector3(-10, 10, -45)
+	#Vector3(0, 12, 0),
+	#Vector3(20, 18, -30),
+	#Vector3(-25, 15, 25),
+	#Vector3(35, 22, 10),
+	#Vector3(-10, 10, -45)
 ]
 
 var drones: Array[Drone] = []
