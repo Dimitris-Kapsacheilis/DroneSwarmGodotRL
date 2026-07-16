@@ -134,9 +134,8 @@ surface_material_override/0 = SubResource("StandardMaterial3D_c4yth")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39.5602, 0, 59.0571)
 visible = false
 
-[node name="GridManager" type="Node3D" parent="." node_paths=PackedStringArray("grid_logger")]
+[node name="GridManager" type="Node3D" parent="."]
 script = ExtResource("12_fj23i")
-grid_logger = NodePath("GridLogger")
 
 [node name="GridLogger" type="Node" parent="GridManager"]
 script = ExtResource("13_fes1f")

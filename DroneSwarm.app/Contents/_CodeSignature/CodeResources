@@ -4,9 +4,9 @@
 <dict>
 	<key>files</key>
 	<dict>
-		<key>Resources/Drone Swarm.pck</key>
+		<key>Resources/DroneSwarm.pck</key>
 		<data>
-		GqZ7tYE5E0wFyGT7dNZtr18Naq0=
+		XYYLfgOkPYGtlTWWYFUIy4EFno8=
 		</data>
 		<key>Resources/PrivacyInfo.xcprivacy</key>
 		<data>
@@ -19,11 +19,11 @@
 	</dict>
 	<key>files2</key>
 	<dict>
-		<key>Resources/Drone Swarm.pck</key>
+		<key>Resources/DroneSwarm.pck</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			IKkB0v+GYneDXHYWZSn9W4RWNyEXqE+mxuKZInuxluo=
+			+F6H1UhJ9uLMk0/Qt9ljs+izJHUP05S6XsgMI050n4w=
 			</data>
 		</dict>
 		<key>Resources/PrivacyInfo.xcprivacy</key>

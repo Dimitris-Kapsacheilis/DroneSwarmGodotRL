@@ -25,7 +25,167 @@ const DIRECTIONS_3D = [
 	Vector3i(0, 0, 1), Vector3i(0, 0, -1)
 ]
 
+# Add near the top of GridManager script with other variables
+var directions_26: Array[Vector3i] = []
+
+
+func _initialize_directions_26() -> void:
+	directions_26.clear()
+	for x in [-1, 0, 1]:
+		for y in [-1, 0, 1]:
+			for z in [-1, 0, 1]:
+				if x == 0 and y == 0 and z == 0:
+					continue
+				directions_26.append(Vector3i(x, y, z))
+
+# =====================================================
+# A* PATHFINDING ON THE 3D GRID
+# =====================================================
+# =====================================================
+# CORNER-CUTTING & DIAGONAL SAFETY CHECKS
+# =====================================================
+
+# Checks if a direct step between two adjacent cells clips any blocked diagonal corners
+func is_diagonal_move_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
+	var diff = to_coord - from_coord
+	var adx = abs(diff.x)
+	var ady = abs(diff.y)
+	var adz = abs(diff.z)
+	
+	var axes_changed = 0
+	if adx > 0: axes_changed += 1
+	if ady > 0: axes_changed += 1
+	if adz > 0: axes_changed += 1
+	
+	# If moving along only one axis (orthogonal), corner-cutting is impossible
+	if axes_changed <= 1:
+		return true
+		
+	var dx = diff.x
+	var dy = diff.y
+	var dz = diff.z
+	
+	# Case 1: Moving diagonally across 2 axes (planar diagonal)
+	if axes_changed == 2:
+		if dx != 0 and dy != 0:
+			if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or blocked_cells.has(from_coord + Vector3i(0, dy, 0)):
+				return false
+		elif dx != 0 and dz != 0:
+			if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or blocked_cells.has(from_coord + Vector3i(0, 0, dz)):
+				return false
+		elif dy != 0 and dz != 0:
+			if blocked_cells.has(from_coord + Vector3i(0, dy, 0)) or blocked_cells.has(from_coord + Vector3i(0, 0, dz)):
+				return false
+				
+	# Case 2: Moving diagonally across all 3 axes (fully 3D diagonal)
+	elif axes_changed == 3:
+		# Check the 3 direct face-sharing neighbor cells
+		if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or \
+		   blocked_cells.has(from_coord + Vector3i(0, dy, 0)) or \
+		   blocked_cells.has(from_coord + Vector3i(0, 0, dz)):
+			return false
+		# Check the 3 edge-sharing neighbor cells
+		if blocked_cells.has(from_coord + Vector3i(dx, dy, 0)) or \
+		   blocked_cells.has(from_coord + Vector3i(dx, 0, dz)) or \
+		   blocked_cells.has(from_coord + Vector3i(0, dy, dz)):
+			return false
+			
+	return true
+
+# Traces a straight vector step-by-step to check for out-of-bounds, obstacles, or corner-clipping
+func is_straight_path_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
+	var current = from_coord
+	var diff = to_coord - from_coord
+	
+	var steps = max(abs(diff.x), max(abs(diff.y), abs(diff.z)))
+	if steps == 0:
+		return true
+		
+	# Since movement offsets are uniform, we can calculate our direction vector per grid step
+	var step_dir = Vector3i(
+		roundi(float(diff.x) / steps),
+		roundi(float(diff.y) / steps),
+		roundi(float(diff.z) / steps)
+	)
+	
+	for i in range(steps):
+		var next_cell = current + step_dir
+		if not is_within_bounds(next_cell):
+			return false
+		if not is_diagonal_move_safe(current, next_cell):
+			return false
+		current = next_cell
+		
+	return true
+# Calculates a path from start grid position to end grid position avoiding blocked cells
+func find_path(start: Vector3i, end: Vector3i) -> Array[Vector3i]:
+	if not is_within_bounds(start) or not is_within_bounds(end):
+		return []
+
+	if start == end:
+		return [start]
+
+	var open_set: Array[Vector3i] = [start]
+	var came_from: Dictionary = {} # Vector3i -> Vector3i
+
+	var g_score: Dictionary = {} # Vector3i -> float
+	g_score[start] = 0.0
+
+	var f_score: Dictionary = {} # Vector3i -> float
+	f_score[start] = _heuristic(start, end)
+
+	while open_set.size() > 0:
+		# Get node in open_set with the lowest f_score
+		var current = open_set[0]
+		var lowest_f = f_score.get(current, INF)
+		
+		for node in open_set:
+			var score = f_score.get(node, INF)
+			if score < lowest_f:
+				current = node
+				lowest_f = score
+
+		if current == end:
+			return _reconstruct_path(came_from, current)
+
+		open_set.erase(current)
+
+		# Explore adjacent cells
+		for dir in directions_26:
+			var neighbor = current + dir
+			
+			if not is_within_bounds(neighbor):
+				continue
+			# SAFETY UPDATE: Skip neighbor if the transition cuts a corner
+			if not is_diagonal_move_safe(current, neighbor):
+				continue
+			# Calculate movement cost (diagonal moves cost slightly more than orthogonal moves)
+			var move_cost = Vector3(dir).length()
+			var tentative_g = g_score[current] + move_cost
+
+			if tentative_g < g_score.get(neighbor, INF):
+				came_from[neighbor] = current
+				g_score[neighbor] = tentative_g
+				f_score[neighbor] = tentative_g + _heuristic(neighbor, end)
+				
+				if not open_set.has(neighbor):
+					open_set.append(neighbor)
+
+	# Return empty array if no path is found
+	return []
+
+func _heuristic(a: Vector3i, b: Vector3i) -> float:
+	# Euclidean distance heuristic in 3D
+	return Vector3(a).distance_to(Vector3(b))
+
+func _reconstruct_path(came_from: Dictionary, current: Vector3i) -> Array[Vector3i]:
+	var total_path: Array[Vector3i] = [current]
+	while came_from.has(current):
+		current = came_from[current]
+		total_path.push_front(current)
+	return total_path
 func _ready() -> void:
+	_initialize_directions_26()
 	blue_material = StandardMaterial3D.new()
 	blue_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	blue_material.albedo_color = Color(0.0, 0.5, 1.0, 0.3)

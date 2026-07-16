@@ -5,11 +5,11 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>Drone Swarm</string>
+	<string>DroneSwarm</string>
 	<key>CFBundleName</key>
-	<string>Drone Swarm</string>
+	<string>DroneSwarm</string>
 	<key>CFBundleDisplayName</key>
-	<string>Drone Swarm</string>
+	<string>DroneSwarm</string>
 	<key>CFBundleIconFile</key>
 	<string>icon.icns</string>
 	<key>CFBundleIdentifier</key>

@@ -36,7 +36,8 @@ var has_target: bool = false
 
 
 func _ready() -> void:
-	ai_controller.init(self)
+	if ai_controller!=null:
+		ai_controller.init(self)
 	_apply_color()
 	randomize()
 	
@@ -123,10 +124,11 @@ func set_boids_data(drones_list: Array[Drone]) -> void:
 	all_drones = drones_list
 
 func _physics_process(delta: float) -> void:
-	if ai_controller.needs_reset:
-		ai_controller.reset()
-		#drone.reset()
-		return
+	if ai_controller !=null:
+		if ai_controller.needs_reset:
+			ai_controller.reset()
+			#drone.reset()
+			return
 	
 	#Change for dorne movement
 	#var movement : float

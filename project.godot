@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="Drone Swarm"
+config/name="DroneSwarm"
 run/main_scene="res://scenes/swarm_test.tscn"
 config/features=PackedStringArray("4.3", "Forward Plus")
 config/icon="res://icon.svg"
