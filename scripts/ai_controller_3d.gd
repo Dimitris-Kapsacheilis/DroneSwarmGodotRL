@@ -3,46 +3,98 @@ extends AIController3D
 @onready var grid_manager = get_node_or_null("/root/Swarm Test/GridManager")
 @onready var navigator = get_parent().get_node_or_null("Navigator")
 @onready var swarm_controller = get_parent().get_node_or_null("/root/Swarm Test/Swarm Controller")
-
+@onready var obstacle_spawner = get_node_or_null("/root/Swarm Test/Obstacles")
 @export var max_tracked_frontiers: int = 3
+@export var max_tracked_obstacles: int = 3 # K-nearest obstacles to track
 
 # Safeguarded initialization to prevent startup crashes if GridManager is not yet ready
 @onready var max_action_radius: float = (grid_manager.local_search_radius - 1) if is_instance_valid(grid_manager) and "local_search_radius" in grid_manager else 10.0
 
 # Scaling constants for clean normalization
 @export var max_velocity_reference: float = 5.0     # Expected max speed of the drone
-@export var max_distance_reference: float = 30.0    # Distance ceiling for NFZ observations
+@export var max_distance_reference: float = 30.0    # Distance ceiling for NFZ and Obstacle observations
 @export var completion_bonus: float = 10.0          
 @export var nfz_violation_penalty: float = 5.0      
+@export var obstacle_collision_penalty: float = 10.0 # Penalty for hitting an obstacle
 
 var cached_centroids: Array = []
 var _cached_nfz_nodes: Array = [] 
 var actions_taken := 0
 var previous_coverage := 0.0
 var previous_discovered_voxels := 0
-var coverage_threshold = 95
+var coverage_threshold = 85
 var violated := false
+var hit_obstacle := false # Tracks if the drone hit an obstacle during the step
+var _signals_connected := false # Track signal status
 
 # Discrete action space variables
 var directions_26: Array[Vector3i] = []
-const OFFSETS = [1, 5, 10]
+const OFFSETS = [1]#, 5, 10]
 
 func _ready() -> void:
 	super._ready()
 	_initialize_directions()
+	_connect_drone_signals()
 
 func _process(_delta: float) -> void:
 	return
 
 # Monitors position on every physics frame to catch high-speed violations
 func _physics_process(_delta: float) -> void:
-	if done or violated:
+	if done or violated or hit_obstacle:
+		return
+	# Safe fall-back: try to connect signals if they weren't ready at startup
+	if not _signals_connected:
+		_connect_drone_signals()
+		
+	if is_instance_valid(navigator) and is_instance_valid(navigator.drone):
+		var drone_pos = navigator.drone.global_position
+		if _is_inside_any_nfz(drone_pos):
+			violated = true
+			
+	if is_instance_valid(navigator) and is_instance_valid(navigator.drone):
+		var drone_pos = navigator.drone.global_position
+		if _is_inside_any_nfz(drone_pos):
+			violated = true
+			
+			# Diagnostic log layout to identify flight edge cases
+			print("--- NFZ VIOLATION REGISTERED ---")
+			print("Drone Global Position: ", drone_pos)
+			print("Drone Grid Coordinate: ", _get_current_grid_pos())
+			print("Target Waypoint: ", navigator.current_target_pos)
+			print("Path Size Remaining: ", navigator.current_path.size())
+			if navigator.current_path.size() > 0:
+				print("Active Trajectory Queue: ", navigator.current_path)
+			
+			for zone in _get_nfz_nodes():
+				if zone.has_method("contains_position") and zone.contains_position(drone_pos):
+					print("Violated Node ID: ", zone.name)
+					print("Boundary Altitude: [", zone.min_altitude, " - ", zone.max_altitude, "]")
+					print("Polygon Points: ", zone.polygon)
+			print("---------------------------------")
+
+# Establishes connections with the main drone signals
+# Replace the old _connect_drone_signals with this
+func _connect_drone_signals() -> void:
+	if _signals_connected:
 		return
 		
 	if is_instance_valid(navigator) and is_instance_valid(navigator.drone):
-		if _is_inside_any_nfz(navigator.drone.global_position):
-			violated = true
-			print("NFZ Violation registered!")
+		var drone_node = navigator.drone
+		if drone_node.has_signal("collided"):
+			if not drone_node.collided.is_connected(_on_drone_collided):
+				drone_node.collided.connect(_on_drone_collided)
+			_signals_connected = true
+			print("AI Controller successfully connected to Drone collision signals.")
+
+func _on_drone_collided(collider: Node) -> void:
+	if not violated and not hit_obstacle:
+		hit_obstacle = true
+		
+		print("--- OBSTACLE COLLISION REGISTERED ---")
+		print("Drone Position: ", navigator.drone.global_position)
+		print("Hit Object: ", collider.name)
+		print("--------------------------------------")
 
 # Initialize the 26 adjacent 3D spatial directions
 func _initialize_directions() -> void:
@@ -68,9 +120,9 @@ func _get_current_grid_pos() -> Vector3i:
 		return grid_manager.local_to_map(grid_manager.to_local(drone_pos))
 	else:
 		return Vector3i(
-			roundi(drone_pos.x),
-			roundi(drone_pos.y),
-			roundi(drone_pos.z)
+			floor(drone_pos.x),
+			floor(drone_pos.y),
+			floor(drone_pos.z)
 		)
 
 # =====================================================
@@ -78,7 +130,6 @@ func _get_current_grid_pos() -> Vector3i:
 # =====================================================
 
 func get_obs() -> Dictionary:
-	# Default fallback observations (25 dimensional)
 	var obs = [
 		0.0, 0.0, 0.0, # Position
 		0.0, 0.0, 0.0, # Velocity
@@ -86,12 +137,17 @@ func get_obs() -> Dictionary:
 		0.0, 0.0, 0.0, # Frontier 1 relative
 		0.0, 0.0, 0.0, # Frontier 2 relative
 		0.0, 0.0, 0.0, # Frontier 3 relative
-		0.0, 0.0, 0.0, # NFZ 1 relative vector (x, y, z)
-		0.0, 0.0, 0.0, # NFZ 2 relative vector (x, y, z)
-		0.0, 0.0, 0.0  # NFZ 3 relative vector (x, y, z)
+		0.0, 0.0, 0.0, # NFZ 1 relative vector
+		0.0, 0.0, 0.0, # NFZ 2 relative vector
+		0.0, 0.0, 0.0, # NFZ 3 relative vector
+		0.0, 0.0, 0.0, # Obstacle 1 relative position
+		0.0, 0.0, 0.0, # Obstacle 1 relative velocity
+		0.0, 0.0, 0.0, # Obstacle 2 relative position
+		0.0, 0.0, 0.0, # Obstacle 2 relative velocity
+		0.0, 0.0, 0.0, # Obstacle 3 relative position
+		0.0, 0.0, 0.0  # Obstacle 3 relative velocity
 	]
 	
-	# Fallback mask (all actions blocked if nodes are invalid)
 	var action_mask: Array[float] = []
 	action_mask.resize(78)
 	action_mask.fill(0.0)
@@ -103,20 +159,19 @@ func get_obs() -> Dictionary:
 		}
 
 	var pos = navigator.drone.global_position
-	var vel = navigator.velocity
+	
+	# Since drone is a RigidBody3D, pull actual linear velocity directly
+	var vel = navigator.drone.linear_velocity if navigator.drone is RigidBody3D else navigator.velocity
 	var grid_limits = Vector3(grid_manager.grid_size)
 
-	# Normalize Position to [0, 1] based on grid size
 	var norm_pos_x = clampf(pos.x / grid_limits.x, 0.0, 1.0)
 	var norm_pos_y = clampf(pos.y / grid_limits.y, 0.0, 1.0)
 	var norm_pos_z = clampf(pos.z / grid_limits.z, 0.0, 1.0)
 
-	# Normalize Velocity to [-1, 1] using max reference speed
 	var norm_vel_x = clampf(vel.x / max_velocity_reference, -1.0, 1.0)
 	var norm_vel_y = clampf(vel.y / max_velocity_reference, -1.0, 1.0)
 	var norm_vel_z = clampf(vel.z / max_velocity_reference, -1.0, 1.0)
 
-	# Coverage is naturally in [0, 1]
 	var coverage = grid_manager.get_coverage_percentage() / 100.0
 		
 	obs = [ 
@@ -125,7 +180,7 @@ func get_obs() -> Dictionary:
 		coverage
 	]
 	
-	# Normalize Frontier observations to [-1, 1] based on local search window
+	# Frontier Observation Parsing
 	var frontier_obs: Array[float] = []
 	var centroids: Array = []
 	
@@ -153,7 +208,7 @@ func get_obs() -> Dictionary:
 			
 	obs.append_array(frontier_obs)
 	
-	# Calculate NFZ relative vectors
+	# NFZ Observation Parsing
 	var nfz_relative_vectors: Array[float] = []
 	var nfz_nodes = _get_nfz_nodes()
 	
@@ -167,7 +222,7 @@ func get_obs() -> Dictionary:
 		return a.distance < b.distance
 	)
 	
-	for i in range(3):
+	for i in range(max_tracked_frontiers):
 		if i < distance_mappings.size():
 			var rel_vec = distance_mappings[i].rel_vector
 			var norm_x = clampf(rel_vec.x / max_distance_reference, -1.0, 1.0)
@@ -177,28 +232,68 @@ func get_obs() -> Dictionary:
 			nfz_relative_vectors.append(norm_y)
 			nfz_relative_vectors.append(norm_z)
 		else:
-			# Neutral default vectors if less than 3 zones are available
 			nfz_relative_vectors.append(1.0)
 			nfz_relative_vectors.append(1.0)
 			nfz_relative_vectors.append(1.0)
 
 	obs.append_array(nfz_relative_vectors)
 	
+	# Obstacle Observation Parsing (K-Nearest)
+	var obstacle_obs: Array[float] = []
+	var all_obstacles = get_tree().get_nodes_in_group("obstacles")
+	
+	all_obstacles.sort_custom(func(a, b):
+		return pos.distance_squared_to(a.global_position) < pos.distance_squared_to(b.global_position)
+	)
+	
+	for i in range(max_tracked_obstacles):
+		if i < all_obstacles.size():
+			var obs_node = all_obstacles[i] as Node3D
+			var rel_pos = obs_node.global_position - pos
+			
+			var obs_velocity = Vector3.ZERO
+			if obs_node is RigidBody3D:
+				obs_velocity = obs_node.linear_velocity
+			elif "velocity" in obs_node:
+				obs_velocity = obs_node.velocity
+			
+			var rel_vel = obs_velocity - vel
+			
+			# Relative Position
+			obstacle_obs.append(clampf(rel_pos.x / max_distance_reference, -1.0, 1.0))
+			obstacle_obs.append(clampf(rel_pos.y / max_distance_reference, -1.0, 1.0))
+			obstacle_obs.append(clampf(rel_pos.z / max_distance_reference, -1.0, 1.0))
+			
+			# Relative Velocity
+			obstacle_obs.append(clampf(rel_vel.x / max_velocity_reference, -1.0, 1.0))
+			obstacle_obs.append(clampf(rel_vel.y / max_velocity_reference, -1.0, 1.0))
+			obstacle_obs.append(clampf(rel_vel.z / max_velocity_reference, -1.0, 1.0))
+		else:
+			# Padding (default safe values: distant offset, zero velocity difference)
+			obstacle_obs.append(1.0)
+			obstacle_obs.append(1.0)
+			obstacle_obs.append(1.0)
+			
+			obstacle_obs.append(0.0)
+			obstacle_obs.append(0.0)
+			obstacle_obs.append(0.0)
+			
+	obs.append_array(obstacle_obs)
+	
 	# Compute action masks for the 78 discrete actions
 	action_mask.clear()
 	var current_grid_pos = _get_current_grid_pos()
 	
-	for offset_idx in range(3):
+	for offset_idx in range(len(OFFSETS)):
 		var step = OFFSETS[offset_idx]
-		for dir_idx in range(26):
+		for dir_idx in range(directions_26.size()):
 			var dir = directions_26[dir_idx]
 			var target_coord = current_grid_pos + (dir * step)
 			
-			# SAFETY UPDATE: Check if the continuous step is clean and does not clip any corners
+			# Verify straight-line path is safe from corner clipping or obstacles
 			if grid_manager.has_method("is_straight_path_safe") and grid_manager.is_straight_path_safe(current_grid_pos, target_coord):
 				action_mask.append(1.0)
 			elif grid_manager.is_within_bounds(target_coord) and not grid_manager.has_method("is_straight_path_safe"):
-				# Fallback if method is missing
 				action_mask.append(1.0)
 			else:
 				action_mask.append(0.0)
@@ -223,8 +318,13 @@ func get_reward() -> float:
 		done = true
 		needs_reset = true
 		return reward
+		
+	if hit_obstacle:
+		reward = -obstacle_collision_penalty
+		done = true
+		needs_reset = true
+		return reward
 	
-	# Determine current absolute voxel count
 	var current_voxels = 0
 	if grid_manager.has_method("get_explored_count"):
 		current_voxels = grid_manager.get_explored_count()
@@ -232,17 +332,13 @@ func get_reward() -> float:
 		current_voxels = grid_manager.get_discovered_count()
 	elif "grid_size" in grid_manager:
 		var total_cells = grid_manager.grid_size.x * grid_manager.grid_size.y * grid_manager.grid_size.z
-		current_voxels = roundi((coverage / 100.0) * total_cells)
+		current_voxels = floor((coverage / 100.0) * total_cells)
 
 	if not navigator.has_target: 
-		# 1. Reward newly discovered coverage based on voxel count
 		var new_voxels_discovered = current_voxels - previous_discovered_voxels
-		reward = float(new_voxels_discovered) * 1.0
+		reward = float(new_voxels_discovered) * 0.01
+		#reward -= 0.0001 * actions_taken
 		
-		# 2. Living penalty
-		reward -= 0.001 * actions_taken
-		
-		# 3. Frontier Proximity Reward
 		if is_instance_valid(navigator.drone):
 			var pos = navigator.drone.global_position
 			var centroids = grid_manager.get_frontier_centroids(3)
@@ -256,10 +352,9 @@ func get_reward() -> float:
 				var proximity_shaping = 0.5 / (1.0 + closest_dist)
 				reward += proximity_shaping
 		
-		# 4. Completion bonus
 		if coverage >= coverage_threshold:
 			reward += completion_bonus
-			print("EPISODE STEPS : ", n_steps ," , ACTIONS TAKEN : " , actions_taken)
+			print("EPISODE STEPS : ", n_steps ," , ACTIONS TAKEN : " , actions_taken," DONE!!!!! ")
 			done = true
 			needs_reset = true
 			
@@ -277,14 +372,20 @@ func get_done() -> bool:
 		return false
 
 	var coverage = grid_manager.get_coverage_percentage()
-
+	
 	if coverage >= coverage_threshold:
 		done = true
 		needs_reset = true
 		return true
 
 	if violated:
-		print("EPISODE STEPS : ", n_steps ," , ACTIONS TAKEN : " , actions_taken, " , PERCENTAGE : ", coverage)
+		print("EPISODE STEPS : ", n_steps ," , ACTIONS TAKEN : " , actions_taken, " , PERCENTAGE : ", coverage, " [FAILED: NFZ VIOLATION]")
+		done = true
+		needs_reset = true
+		return true
+
+	if hit_obstacle:
+		print("EPISODE STEPS : ", n_steps ," , ACTIONS TAKEN : " , actions_taken, " , PERCENTAGE : ", coverage, " [FAILED: OBSTACLE COLLISION]")
 		done = true
 		needs_reset = true
 		return true
@@ -299,7 +400,7 @@ func get_action_space() -> Dictionary:
 	return {
 		"flight_waypoint": {
 			"action_type": "discrete",
-			"size": 78
+			"size": 26
 		}
 	}
 
@@ -324,7 +425,6 @@ func set_action(action) -> void:
 
 	var action_idx: int = 0
 
-	# Safely extract discrete index
 	if action is Dictionary:
 		if not action.has("flight_waypoint"):
 			print("no waypoint action")
@@ -344,7 +444,6 @@ func set_action(action) -> void:
 
 	var current_grid_pos = _get_current_grid_pos()
 
-	# Decode discrete action index to direction and offset magnitude
 	var direction_idx = action_idx % 26
 	var offset_idx = action_idx / 26
 
@@ -353,11 +452,9 @@ func set_action(action) -> void:
 
 	var target_coord = current_grid_pos + (selected_direction * selected_offset)
 
-	# Verify safety constraints (action masking should prevent violations, but fallbacks prevent crashes)
 	if not grid_manager.is_within_bounds(target_coord):
-		# Fallback: Search alternative moves starting from closest offsets if blocked
 		var found_safe_alternative = false
-		for alt_offset_idx in range(3):
+		for alt_offset_idx in range(len(OFFSETS)):
 			var alt_step = OFFSETS[alt_offset_idx]
 			var alt_coord = current_grid_pos + (selected_direction * alt_step)
 			if grid_manager.is_within_bounds(alt_coord):
@@ -365,7 +462,6 @@ func set_action(action) -> void:
 				found_safe_alternative = true
 				break
 		
-		# Ultimate fallback: keep drone in place
 		if not found_safe_alternative:
 			target_coord = current_grid_pos
 
@@ -380,12 +476,14 @@ func reset() -> void:
 	needs_reset = false
 	done = false
 	violated = false
+	hit_obstacle = false
 	actions_taken = 0
 	previous_coverage = 0.0
 	previous_discovered_voxels = 0
 	n_steps = 0
 	_cached_nfz_nodes.clear()
-
+	_signals_connected = false
+	
 	if is_instance_valid(navigator):
 		navigator.reset_rl_stats()
 
@@ -394,6 +492,14 @@ func reset() -> void:
 		
 	if is_instance_valid(swarm_controller):
 		swarm_controller.reset_swarm_pos()
+	# --- ADD THIS LOGIC TO RESET THE OBSTACLES ---
+	if is_instance_valid(obstacle_spawner) and obstacle_spawner.has_method("reset_obstacles"):
+		obstacle_spawner.reset_obstacles()
+		
+	# Reconnect signals in case the drone node was reset/re-instantiated
+	_signals_connected = false
+	# Reconnect signals in case the drone node was reset/re-instantiated
+	_connect_drone_signals()
 
 func set_done_false():
 	done = false

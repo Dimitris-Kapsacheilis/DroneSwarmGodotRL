@@ -7,7 +7,7 @@ extends Node3D
 @onready var grid_manager = get_node_or_null("/root/Swarm Test/GridManager")
 @onready var drone: Node3D = get_parent()
 
-# Path tracking
+# Path and Target tracking
 var current_path: Array[Vector3] = []
 var current_target_pos: Vector3 = Vector3.ZERO
 var has_target: bool = false
@@ -97,34 +97,27 @@ func perform_action(target_coord: Vector3i) -> void:
 		clamped(target_coord.z, 0, grid_manager.grid_size.z - 1)
 	)
 
-	# Get start position in grid coordinates
 	var start_grid_pos = _get_current_grid_pos()
-	
-	# Calculate path using A*
 	var grid_path = grid_manager.find_path(start_grid_pos, clamped_coord)
 	
 	current_path.clear()
 	
 	if grid_path.size() > 1:
-		# Convert grid path indices back to global coordinates
 		for cell in grid_path:
 			var local_target = Vector3(cell.x + 0.5, cell.y + 0.5, cell.z + 0.5)
 			current_path.append(grid_manager.to_global(local_target))
 		
-		# Set initial checkpoint
 		current_target_pos = current_path[0]
 		has_target = true
 	else:
-		# Fallback if A* found no path (or start is already end)
-		var local_target = Vector3(clamped_coord.x + 0.5, clamped_coord.y + 0.5, clamped_coord.z + 0.5)
-		current_target_pos = grid_manager.to_global(local_target)
-		current_path = [current_target_pos]
-		has_target = true
+		# Safety fallback: do not execute straight-line moves on path calculation failure
+		#print("DEBUG WARNING: A* path planning failed from ", start_grid_pos, " to ", clamped_coord, ". Command rejected.")
+		has_target = false
+		current_path.clear()
 
 	actions_taken += 1
 
 	if is_instance_valid(sphere_inst) and current_path.size() > 0:
-		# Place visual indicator at ultimate destination
 		sphere_inst.global_position = current_path[-1]
 		sphere_inst.visible = true
 
@@ -185,15 +178,14 @@ func fly_along_path(delta: float) -> void:
 		has_target = false
 		return
 		
-	# Target the first node in our path queue
 	current_target_pos = current_path[0]
 	
 	var direction = (current_target_pos - drone.global_position)
 	var distance = direction.length()
 
-	# Check if we reached the current checkpoint
+	# Progress to next waypoint segment once threshold is met
 	if distance <= arrival_threshold:
-		current_path.remove_at(0) # Pop current waypoint
+		current_path.remove_at(0)
 		if current_path.is_empty():
 			has_target = false
 			if is_instance_valid(sphere_inst):
@@ -205,7 +197,6 @@ func fly_along_path(delta: float) -> void:
 			current_target_pos = current_path[0]
 			direction = (current_target_pos - drone.global_position)
 
-	# Deterministic 3D Rotation (+Z aligned to current path segment)
 	if direction.length() > 0.001:
 		var forward = direction.normalized()
 		var temp_up = Vector3.UP
@@ -218,7 +209,6 @@ func fly_along_path(delta: float) -> void:
 		
 		drone.global_transform.basis = Basis(right, up, forward)
 
-	# Move toward the active segment target
 	drone.global_position = drone.global_position.move_toward(current_target_pos, flight_speed * delta)
 
 func draw_trajectory_line() -> void:
@@ -228,11 +218,9 @@ func draw_trajectory_line() -> void:
 	line_mesh.clear_surfaces()
 	line_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 	
-	# Draw line segment from drone to immediate waypoint
 	line_mesh.surface_add_vertex(drone.global_position)
 	line_mesh.surface_add_vertex(current_path[0])
 	
-	# Draw the remaining segments of the path
 	for i in range(current_path.size() - 1):
 		line_mesh.surface_add_vertex(current_path[i])
 		line_mesh.surface_add_vertex(current_path[i + 1])

@@ -7,38 +7,105 @@ Assumes the environment observation is a dict with:
 
 If your GodotEnv doesn't emit action_mask yet, see the note at the bottom of
 run_masked_ppo.py for the GDScript/Python side changes needed to add it.
+
+Changes vs original version:
+    - Fixed approx_kl early-stopping to use the epoch-mean KL, not just the last minibatch.
+    - Added a running observation normalizer (helps a lot once frontier feature scale drifts
+      as coverage progresses).
+    - Added PPO2-style value function clipping.
+    - Added linear LR / entropy-coef annealing over total_timesteps.
+    - Adam eps=1e-5 (CleanRL-style stabilizer) instead of torch default 1e-8.
+    - save/load now includes optimizer + obs normalizer state, so training can resume.
+    - MaskedActorCritic now takes an injectable encoder, so you can swap in a GNN encoder
+      later for MAPPO/Phase 2+ without touching the PPO update loop.
+    - Added an assertion (dev-mode) that every action_mask row has >=1 valid action.
 """
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
+
+
+# --------------------------------------------------------------------------
+# Observation normalization
+# --------------------------------------------------------------------------
+
+class RunningNorm(nn.Module):
+    """Running mean/std normalizer (Welford-style), kept as buffers so it moves
+    with the model via .to(device) and is included in state_dict()."""
+
+    def __init__(self, shape, eps: float = 1e-8, clip: float = 10.0):
+        super().__init__()
+        self.eps = eps
+        self.clip = clip
+        self.register_buffer("mean", torch.zeros(shape))
+        self.register_buffer("var", torch.ones(shape))
+        self.register_buffer("count", torch.tensor(eps))
+
+    @torch.no_grad()
+    def update(self, x: torch.Tensor):
+        batch_mean = x.mean(dim=0)
+        batch_var = x.var(dim=0, unbiased=False)
+        batch_count = x.shape[0]
+
+        delta = batch_mean - self.mean
+        tot_count = self.count + batch_count
+
+        new_mean = self.mean + delta * batch_count / tot_count
+        m_a = self.var * self.count
+        m_b = batch_var * batch_count
+        m2 = m_a + m_b + delta.pow(2) * self.count * batch_count / tot_count
+        new_var = m2 / tot_count
+
+        self.mean.copy_(new_mean)
+        self.var.copy_(new_var)
+        self.count.copy_(tot_count)
+
+    def forward(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
+        if update and self.training:
+            self.update(x)
+        normed = (x - self.mean) / torch.sqrt(self.var + self.eps)
+        return torch.clamp(normed, -self.clip, self.clip)
 
 
 # --------------------------------------------------------------------------
 # Network
 # --------------------------------------------------------------------------
 
-class MaskedActorCritic(nn.Module):
-    def __init__(self, obs_dim: int, num_actions: int, hidden_size: int = 256):
+class MLPEncoder(nn.Module):
+    """Default encoder. Swap this out (e.g. for a GNN encoder) when moving to
+    MAPPO/Phase 2+ -- MaskedActorCritic doesn't care what's inside, only the
+    output dim."""
+
+    def __init__(self, obs_dim: int, hidden_size: int = 256):
         super().__init__()
-        self.shared = nn.Sequential(
+        self.out_dim = hidden_size
+        self.net = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
             nn.Tanh(),
             nn.Linear(hidden_size, hidden_size),
             nn.Tanh(),
         )
-        self.policy_head = nn.Linear(hidden_size, num_actions)
-        self.value_head = nn.Linear(hidden_size, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class MaskedActorCritic(nn.Module):
+    def __init__(self, encoder: nn.Module, encoder_out_dim: int, num_actions: int):
+        super().__init__()
+        self.encoder = encoder
+        self.policy_head = nn.Linear(encoder_out_dim, num_actions)
+        self.value_head = nn.Linear(encoder_out_dim, 1)
 
         # small init on policy head helps early training stability
         nn.init.orthogonal_(self.policy_head.weight, gain=0.01)
         nn.init.constant_(self.policy_head.bias, 0.0)
 
     def forward(self, obs: torch.Tensor):
-        x = self.shared(obs)
+        x = self.encoder(obs)
         logits = self.policy_head(x)
         value = self.value_head(x).squeeze(-1)
         return logits, value
@@ -128,28 +195,71 @@ class PPOConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     seed: int = 0
 
+    # New: annealing + normalization toggles
+    anneal_lr: bool = True
+    anneal_ent_coef: bool = True
+    normalize_obs: bool = True
+    clip_vloss: bool = True
+    debug_assertions: bool = True   # set False once you trust your env's action_mask
+
 
 class MaskedPPO:
-    def __init__(self, config: PPOConfig):
+    def __init__(self, config: PPOConfig, encoder: Optional[nn.Module] = None):
         self.cfg = config
         torch.manual_seed(config.seed)
         np.random.seed(config.seed)
 
         self.device = torch.device(config.device)
+
+        # Allows swapping in e.g. a GNN encoder later for MAPPO without touching
+        # anything below this line.
+        if encoder is None:
+            encoder = MLPEncoder(config.obs_dim, config.hidden_size)
+        encoder_out_dim = getattr(encoder, "out_dim", config.hidden_size)
+
         self.model = MaskedActorCritic(
-            config.obs_dim, config.num_actions, config.hidden_size
+            encoder, encoder_out_dim, config.num_actions
         ).to(self.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=config.learning_rate)
+
+        # eps=1e-5 (vs torch default 1e-8) is a well-documented PPO stabilizer (CleanRL etc.)
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(), lr=config.learning_rate, eps=1e-5
+        )
+
+        self.obs_normalizer: Optional[RunningNorm] = None
+        if config.normalize_obs:
+            self.obs_normalizer = RunningNorm((config.obs_dim,)).to(self.device)
 
         self.buffer = RolloutBuffer(
             config.num_steps, config.num_envs, config.obs_dim, config.num_actions, self.device
         )
+
+        # tracks progress for LR/entropy annealing; call `notify_timesteps` from your
+        # training loop each rollout, or pass `timesteps_so_far` into update() directly.
+        self._timesteps_so_far = 0
+
+    def _normalize(self, obs_t: torch.Tensor, update: bool) -> torch.Tensor:
+        if self.obs_normalizer is None:
+            return obs_t
+        return self.obs_normalizer(obs_t, update=update)
+
+    def _current_frac_remaining(self) -> float:
+        frac = 1.0 - (self._timesteps_so_far / max(1, self.cfg.total_timesteps))
+        return max(0.0, min(1.0, frac))
 
     @torch.no_grad()
     def get_action(self, obs: np.ndarray, action_mask: np.ndarray):
         """obs: (num_envs, obs_dim), action_mask: (num_envs, num_actions)"""
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
         mask_t = torch.as_tensor(action_mask, dtype=torch.float32, device=self.device)
+
+        if self.cfg.debug_assertions:
+            assert (mask_t.sum(dim=-1) > 0).all(), (
+                "action_mask row with no valid actions -- check your frontier "
+                "top-K candidate generation for an edge case producing zero candidates."
+            )
+
+        obs_t = self._normalize(obs_t, update=True)
 
         dist, value = self.model.masked_dist(obs_t, mask_t)
         action = dist.sample()
@@ -158,14 +268,27 @@ class MaskedPPO:
             action.cpu().numpy(),
             logprob,
             value,
-            obs_t,
+            obs_t,   # NOTE: this is the *normalized* obs -- store this in the buffer,
+                     # not the raw obs, so training sees consistent scale.
             mask_t,
         )
 
-    def update(self, last_obs: np.ndarray, last_done: np.ndarray):
+    def update(self, last_obs: np.ndarray, last_done: np.ndarray, timesteps_so_far: Optional[int] = None):
         cfg = self.cfg
+        if timesteps_so_far is not None:
+            self._timesteps_so_far = timesteps_so_far
+
+        # --- LR / entropy annealing ---
+        frac_remaining = self._current_frac_remaining()
+        if cfg.anneal_lr:
+            lr_now = cfg.learning_rate * frac_remaining
+            for pg in self.optimizer.param_groups:
+                pg["lr"] = lr_now
+        ent_coef_now = cfg.ent_coef * frac_remaining if cfg.anneal_ent_coef else cfg.ent_coef
+
         with torch.no_grad():
             last_obs_t = torch.as_tensor(last_obs, dtype=torch.float32, device=self.device)
+            last_obs_t = self._normalize(last_obs_t, update=False)
             _, last_value = self.model.forward(last_obs_t)
             last_done_t = torch.as_tensor(last_done, dtype=torch.float32, device=self.device)
 
@@ -189,9 +312,12 @@ class MaskedPPO:
         inds = np.arange(batch_size)
 
         clipfracs = []
+        approx_kls = []
+        pg_loss = v_loss = entropy_loss = torch.tensor(0.0)
+
         for epoch in range(cfg.update_epochs):
             np.random.shuffle(inds)
-            approx_kl_epoch = 0.0
+            epoch_kls = []
             for start in range(0, batch_size, minibatch_size):
                 end = start + minibatch_size
                 mb_inds = inds[start:end]
@@ -206,7 +332,7 @@ class MaskedPPO:
                 with torch.no_grad():
                     approx_kl = ((ratio - 1) - logratio).mean().item()
                     clipfracs.append(((ratio - 1.0).abs() > cfg.clip_coef).float().mean().item())
-                approx_kl_epoch = approx_kl
+                epoch_kls.append(approx_kl)
 
                 mb_adv = b_advantages[mb_inds]
 
@@ -214,17 +340,28 @@ class MaskedPPO:
                 pg_loss2 = -mb_adv * torch.clamp(ratio, 1 - cfg.clip_coef, 1 + cfg.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                v_loss = 0.5 * ((values - b_returns[mb_inds]) ** 2).mean()
+                if cfg.clip_vloss:
+                    v_unclipped = (values - b_returns[mb_inds]) ** 2
+                    v_clipped_pred = b_values[mb_inds] + torch.clamp(
+                        values - b_values[mb_inds], -cfg.clip_coef, cfg.clip_coef
+                    )
+                    v_clipped = (v_clipped_pred - b_returns[mb_inds]) ** 2
+                    v_loss = 0.5 * torch.max(v_unclipped, v_clipped).mean()
+                else:
+                    v_loss = 0.5 * ((values - b_returns[mb_inds]) ** 2).mean()
+
                 entropy_loss = entropy.mean()
 
-                loss = pg_loss - cfg.ent_coef * entropy_loss + cfg.vf_coef * v_loss
+                loss = pg_loss - ent_coef_now * entropy_loss + cfg.vf_coef * v_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 self.optimizer.step()
 
-            if cfg.target_kl is not None and approx_kl_epoch > cfg.target_kl:
+            approx_kls.append(np.mean(epoch_kls))
+            # Fixed: compare the epoch's mean KL (not just the last minibatch's) against target_kl.
+            if cfg.target_kl is not None and approx_kls[-1] > cfg.target_kl:
                 break
 
         self.buffer.reset()
@@ -232,12 +369,27 @@ class MaskedPPO:
             "pg_loss": pg_loss.item(),
             "v_loss": v_loss.item(),
             "entropy": entropy_loss.item(),
-            "approx_kl": approx_kl_epoch,
+            "approx_kl": approx_kls[-1],
             "clipfrac": np.mean(clipfracs),
+            "lr": self.optimizer.param_groups[0]["lr"],
+            "ent_coef": ent_coef_now,
         }
 
     def save(self, path: str):
-        torch.save(self.model.state_dict(), path)
+        state = {
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "timesteps_so_far": self._timesteps_so_far,
+        }
+        if self.obs_normalizer is not None:
+            state["obs_normalizer"] = self.obs_normalizer.state_dict()
+        torch.save(state, path)
 
     def load(self, path: str):
-        self.model.load_state_dict(torch.load(path, map_location=self.device))
+        state = torch.load(path, map_location=self.device)
+        self.model.load_state_dict(state["model"])
+        if "optimizer" in state:
+            self.optimizer.load_state_dict(state["optimizer"])
+        if "obs_normalizer" in state and self.obs_normalizer is not None:
+            self.obs_normalizer.load_state_dict(state["obs_normalizer"])
+        self._timesteps_so_far = state.get("timesteps_so_far", 0)

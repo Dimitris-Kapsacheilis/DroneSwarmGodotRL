@@ -1,11 +1,13 @@
 class_name Drone
 extends RigidBody3D
 
+
 @onready var ai_controller = $AIController3D
+@onready var bumper: Area3D = get_node_or_null("Bumper") # Reference to the new Area3D bumper node
 
 @export var drone_color: Color = Color.WHITE
 @export var drone_id: int = -1
-
+signal collided(collider: Node)
 var target_waypoint: Vector3 = Vector3.INF
 var assigned_waypoint_index: int = -1
 var formation_offset: Vector3 = Vector3.ZERO
@@ -40,6 +42,24 @@ func _ready() -> void:
 		ai_controller.init(self)
 	_apply_color()
 	randomize()
+	
+	# Connect the Area3D bumper's body_entered signal instead of the rigid body's contact monitor
+	if bumper != null:
+		if not bumper.body_entered.is_connected(_on_bumper_body_entered):
+			bumper.body_entered.connect(_on_bumper_body_entered)
+	else:
+		push_error("Drone %d: Bumper (Area3D) child node was not found!" % drone_id)
+	
+	# Place the drone on Layer 1
+	set_collision_layer_value(1, true)
+	
+	# Keep these enabled so the drone physically bounces off Layer 1 and Layer 2
+	set_collision_mask_value(1, true)
+	set_collision_mask_value(2, true)
+
+func _on_bumper_body_entered(body: Node) -> void:
+	# Triggered when the Area3D bumper overlaps with an obstacle on Layer 2
+	collided.emit(body)
 	
 func game_over():
 	ai_controller.done = true
@@ -130,15 +150,6 @@ func _physics_process(delta: float) -> void:
 			#drone.reset()
 			return
 	
-	#Change for dorne movement
-	#var movement : float
-	#if ai_controller.heuristic == "human":
-		#movement = Input.get_axis("rotate_anticlockwise", "rotate_clockwise")
-	#else:
-		#movement = ai_controller.move_action
-	#rotate_y(movement*delta*rotation_speed)
-
-	#return
 	if target_waypoint != Vector3.INF:
 		_go_to_waypoint(delta)
 	elif leader != null and in_swarm_mode:

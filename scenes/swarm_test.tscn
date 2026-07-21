@@ -6,7 +6,7 @@
 [ext_resource type="Script" path="res://scripts/NoFlyZone.gd" id="3_63cna"]
 [ext_resource type="Script" path="res://scripts/camera_3d.gd" id="3_gull1"]
 [ext_resource type="ArrayMesh" uid="uid://xdonu5qvxahe" path="res://assets/models/uploads_files_2720101_BusGameMap.obj" id="4_4uwty"]
-[ext_resource type="Script" path="res://scenes/no_fly_zone_manager.gd" id="4_mqnkt"]
+[ext_resource type="Script" path="res://scripts/no_fly_zone_manager.gd" id="4_mqnkt"]
 [ext_resource type="Script" path="res://scripts/rl_environment.gd" id="5_x3jkk"]
 [ext_resource type="Script" path="res://scripts/agents/drone_swarm_ai_controller.gd" id="6_h73wq"]
 [ext_resource type="PackedScene" uid="uid://bvag3gg81did5" path="res://assets/models/stavroupoli.glb" id="7_s7ayj"]
@@ -65,8 +65,7 @@ albedo_color = Color(0, 0, 0, 1)
 
 [node name="Sync" type="Node" parent="."]
 script = ExtResource("1_wjrew")
-action_repeat = 16
-speed_up = 4.0
+action_repeat = 2
 
 [node name="SpeedUp" type="Node" parent="."]
 process_mode = 4
@@ -87,6 +86,7 @@ script = ExtResource("3_63cna")
 
 [node name="NoFlyZoneManager" type="Node3D" parent="."]
 script = ExtResource("4_mqnkt")
+num_zones = 2
 
 [node name="RL Environment" type="Node" parent="."]
 script = ExtResource("5_x3jkk")
@@ -154,12 +154,14 @@ script = ExtResource("13_ihgyo")
 layout_mode = 0
 offset_right = 40.0
 offset_bottom = 23.0
-theme_override_colors/font_color = Color(1, 0.443137, 0.960784, 1)
+theme_override_colors/font_color = Color(0.976471, 0.988235, 0, 1)
 theme_override_font_sizes/font_size = 50
 text = "0 %"
 
 [node name="Obstacles" type="Node3D" parent="."]
 script = ExtResource("14_srhl7")
+spawn_count = 3
+spawn_box_size = Vector3(30, 30, 30)
 ground_static_scene = ExtResource("15_3il8t")
 ground_moving_scene = ExtResource("18_mpqok")
 flying_static_scene = ExtResource("16_awipf")
@@ -179,16 +181,16 @@ visible = false
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 57.5118, 17.7835, 124.991)
 
 [node name="Moving" type="Node3D" parent="Obstacles"]
+process_mode = 4
+visible = false
 script = ExtResource("15_2mx36")
 
 [node name="Ground" type="Node3D" parent="Obstacles/Moving"]
 process_mode = 4
-visible = false
 
 [node name="MovingGroundObstacle" parent="Obstacles/Moving/Ground" instance=ExtResource("18_mpqok")]
 
 [node name="Air" type="Node3D" parent="Obstacles/Moving"]
 process_mode = 4
-visible = false
 
 [node name="MovingAirObstacle" parent="Obstacles/Moving/Air" instance=ExtResource("17_q8vtn")]

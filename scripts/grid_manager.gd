@@ -8,8 +8,12 @@ extends Node3D
 @export var boundary_thickness: float = 0.2
 @export var local_search_radius: int = 16
 
+# Safety Clearance Margin (accounts for physical drone size + tracking errors)
+@export var obstacle_safety_margin: float = 0.65 
+
 var visited_cells = {}
-var blocked_cells = {}
+var blocked_cells = {}      # Permanent blocked coordinates (NFZs)
+var obstacle_cells = {}     # Temporary blocked coordinates (Spawned obstacles)
 var trail_meshes = {}
 var yellow_meshes = {}
 var blue_material: StandardMaterial3D
@@ -18,6 +22,7 @@ var box_mesh: BoxMesh
 var last_drone_grid_pos: Vector3i = Vector3i(99999, 99999, 99999)
 var last_drone_forward: Vector3 = Vector3.ZERO
 var total_cells_count: float = 0.0
+var _summary_pending := false # Prevents console spam by debouncing the print
 
 const DIRECTIONS_3D = [
 	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
@@ -25,167 +30,11 @@ const DIRECTIONS_3D = [
 	Vector3i(0, 0, 1), Vector3i(0, 0, -1)
 ]
 
-# Add near the top of GridManager script with other variables
 var directions_26: Array[Vector3i] = []
 
-
-func _initialize_directions_26() -> void:
-	directions_26.clear()
-	for x in [-1, 0, 1]:
-		for y in [-1, 0, 1]:
-			for z in [-1, 0, 1]:
-				if x == 0 and y == 0 and z == 0:
-					continue
-				directions_26.append(Vector3i(x, y, z))
-
-# =====================================================
-# A* PATHFINDING ON THE 3D GRID
-# =====================================================
-# =====================================================
-# CORNER-CUTTING & DIAGONAL SAFETY CHECKS
-# =====================================================
-
-# Checks if a direct step between two adjacent cells clips any blocked diagonal corners
-func is_diagonal_move_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
-	var diff = to_coord - from_coord
-	var adx = abs(diff.x)
-	var ady = abs(diff.y)
-	var adz = abs(diff.z)
-	
-	var axes_changed = 0
-	if adx > 0: axes_changed += 1
-	if ady > 0: axes_changed += 1
-	if adz > 0: axes_changed += 1
-	
-	# If moving along only one axis (orthogonal), corner-cutting is impossible
-	if axes_changed <= 1:
-		return true
-		
-	var dx = diff.x
-	var dy = diff.y
-	var dz = diff.z
-	
-	# Case 1: Moving diagonally across 2 axes (planar diagonal)
-	if axes_changed == 2:
-		if dx != 0 and dy != 0:
-			if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or blocked_cells.has(from_coord + Vector3i(0, dy, 0)):
-				return false
-		elif dx != 0 and dz != 0:
-			if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or blocked_cells.has(from_coord + Vector3i(0, 0, dz)):
-				return false
-		elif dy != 0 and dz != 0:
-			if blocked_cells.has(from_coord + Vector3i(0, dy, 0)) or blocked_cells.has(from_coord + Vector3i(0, 0, dz)):
-				return false
-				
-	# Case 2: Moving diagonally across all 3 axes (fully 3D diagonal)
-	elif axes_changed == 3:
-		# Check the 3 direct face-sharing neighbor cells
-		if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or \
-		   blocked_cells.has(from_coord + Vector3i(0, dy, 0)) or \
-		   blocked_cells.has(from_coord + Vector3i(0, 0, dz)):
-			return false
-		# Check the 3 edge-sharing neighbor cells
-		if blocked_cells.has(from_coord + Vector3i(dx, dy, 0)) or \
-		   blocked_cells.has(from_coord + Vector3i(dx, 0, dz)) or \
-		   blocked_cells.has(from_coord + Vector3i(0, dy, dz)):
-			return false
-			
-	return true
-
-# Traces a straight vector step-by-step to check for out-of-bounds, obstacles, or corner-clipping
-func is_straight_path_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
-	var current = from_coord
-	var diff = to_coord - from_coord
-	
-	var steps = max(abs(diff.x), max(abs(diff.y), abs(diff.z)))
-	if steps == 0:
-		return true
-		
-	# Since movement offsets are uniform, we can calculate our direction vector per grid step
-	var step_dir = Vector3i(
-		roundi(float(diff.x) / steps),
-		roundi(float(diff.y) / steps),
-		roundi(float(diff.z) / steps)
-	)
-	
-	for i in range(steps):
-		var next_cell = current + step_dir
-		if not is_within_bounds(next_cell):
-			return false
-		if not is_diagonal_move_safe(current, next_cell):
-			return false
-		current = next_cell
-		
-	return true
-# Calculates a path from start grid position to end grid position avoiding blocked cells
-func find_path(start: Vector3i, end: Vector3i) -> Array[Vector3i]:
-	if not is_within_bounds(start) or not is_within_bounds(end):
-		return []
-
-	if start == end:
-		return [start]
-
-	var open_set: Array[Vector3i] = [start]
-	var came_from: Dictionary = {} # Vector3i -> Vector3i
-
-	var g_score: Dictionary = {} # Vector3i -> float
-	g_score[start] = 0.0
-
-	var f_score: Dictionary = {} # Vector3i -> float
-	f_score[start] = _heuristic(start, end)
-
-	while open_set.size() > 0:
-		# Get node in open_set with the lowest f_score
-		var current = open_set[0]
-		var lowest_f = f_score.get(current, INF)
-		
-		for node in open_set:
-			var score = f_score.get(node, INF)
-			if score < lowest_f:
-				current = node
-				lowest_f = score
-
-		if current == end:
-			return _reconstruct_path(came_from, current)
-
-		open_set.erase(current)
-
-		# Explore adjacent cells
-		for dir in directions_26:
-			var neighbor = current + dir
-			
-			if not is_within_bounds(neighbor):
-				continue
-			# SAFETY UPDATE: Skip neighbor if the transition cuts a corner
-			if not is_diagonal_move_safe(current, neighbor):
-				continue
-			# Calculate movement cost (diagonal moves cost slightly more than orthogonal moves)
-			var move_cost = Vector3(dir).length()
-			var tentative_g = g_score[current] + move_cost
-
-			if tentative_g < g_score.get(neighbor, INF):
-				came_from[neighbor] = current
-				g_score[neighbor] = tentative_g
-				f_score[neighbor] = tentative_g + _heuristic(neighbor, end)
-				
-				if not open_set.has(neighbor):
-					open_set.append(neighbor)
-
-	# Return empty array if no path is found
-	return []
-
-func _heuristic(a: Vector3i, b: Vector3i) -> float:
-	# Euclidean distance heuristic in 3D
-	return Vector3(a).distance_to(Vector3(b))
-
-func _reconstruct_path(came_from: Dictionary, current: Vector3i) -> Array[Vector3i]:
-	var total_path: Array[Vector3i] = [current]
-	while came_from.has(current):
-		current = came_from[current]
-		total_path.push_front(current)
-	return total_path
 func _ready() -> void:
 	_initialize_directions_26()
+	
 	blue_material = StandardMaterial3D.new()
 	blue_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	blue_material.albedo_color = Color(0.0, 0.5, 1.0, 0.3)
@@ -205,12 +54,20 @@ func _ready() -> void:
 	await get_tree().process_frame
 	initialize_grid_space()
 
+func _initialize_directions_26() -> void:
+	directions_26.clear()
+	for x in [-1, 0, 1]:
+		for y in [-1, 0, 1]:
+			for z in [-1, 0, 1]:
+				if x == 0 and y == 0 and z == 0:
+					continue
+				directions_26.append(Vector3i(x, y, z))
+
 func initialize_grid_space() -> void:
 	blocked_cells.clear()
 	var nfz_nodes = _find_no_fly_zones()
 	
-	print("GridManager: Found %d NoFlyZone node(s) in the scene tree." % nfz_nodes.size())
-	
+	print("GridManager: Found %d NoFlyZone node(s) in the scene tree." % (nfz_nodes.size()-1))
 	for zone in nfz_nodes:
 		if not ("polygon" in zone and "min_altitude" in zone and "max_altitude" in zone):
 			push_error("GridManager Error: NoFlyZone node '%s' missing required variables." % zone.name)
@@ -221,16 +78,99 @@ func initialize_grid_space() -> void:
 				var coord = Vector3i(x, y, z)
 				var cell_center = Vector3(float(x) + 0.5, float(y) + 0.5, float(z) + 0.5)
 				for zone in nfz_nodes:
-					if _is_point_inside_zone(cell_center, zone):
+					if _is_point_near_zone_with_margin(cell_center, zone, obstacle_safety_margin):
 						blocked_cells[coord] = true
 						break
 	
-	var raw_total := grid_size.x * grid_size.y * grid_size.z
-	var blocked_count := blocked_cells.size()
-	total_cells_count = float(raw_total - blocked_count)
+	recalculate_total_cells()
 	
-	print("GridManager: Initialization completed. Total: %d | Blocked: %d | Flyable: %d" % [raw_total, blocked_count, int(total_cells_count)])
+	print("GridManager: Initialization completed. Total Base Flyable: %d" % int(total_cells_count))
 	print_coverage_stats()
+
+# Helper to convert physical world space position into grid coordinates
+func world_to_grid(world_pos: Vector3) -> Vector3i:
+	return Vector3i(
+		floor(world_pos.x),
+		floor(world_pos.y),
+		floor(world_pos.z)
+	)
+
+# Converts an obstacle's physical shape bounds into grid coordinates and blocks those cells
+func register_obstacle(obstacle: Node3D) -> void:
+	var shape_node = obstacle.find_child("CollisionShape3D", true, false)
+	if not shape_node or not shape_node.shape:
+		return
+		
+	var shape = shape_node.shape
+	var global_center = shape_node.global_position
+	
+	var half_extents = Vector3.ZERO
+	var node_scale = shape_node.global_transform.basis.get_scale()
+	
+	if shape is BoxShape3D:
+		half_extents = (shape.size / 2.0) * node_scale
+	elif shape is SphereShape3D:
+		var radius = shape.radius * node_scale.x
+		half_extents = Vector3(radius, radius, radius)
+	elif shape is CylinderShape3D:
+		var r = shape.radius * node_scale.x
+		var h = shape.height * node_scale.y
+		half_extents = Vector3(r, h/2.0, r)
+		
+	var min_pos = global_center - half_extents
+	var max_pos = global_center + half_extents
+	
+	var min_grid = world_to_grid(min_pos)
+	var max_grid = world_to_grid(max_pos)
+	
+	# Clamp grid range within actual boundary limits
+	min_grid.x = clamp(min_grid.x, 0, grid_size.x - 1)
+	min_grid.y = clamp(min_grid.y, 0, grid_size.y - 1)
+	min_grid.z = clamp(min_grid.z, 0, grid_size.z - 1)
+	
+	max_grid.x = clamp(max_grid.x, 0, grid_size.x - 1)
+	max_grid.y = clamp(max_grid.y, 0, grid_size.y - 1)
+	max_grid.z = clamp(max_grid.z, 0, grid_size.z - 1)
+	
+	# Register each cell contained within bounds
+	for x in range(min_grid.x, max_grid.x + 1):
+		for y in range(min_grid.y, max_grid.y + 1):
+			for z in range(min_grid.z, max_grid.z + 1):
+				var coord = Vector3i(x, y, z)
+				obstacle_cells[coord] = true
+				
+	recalculate_total_cells()
+
+# Recalculates total flyable volume, accounting for overlapping obstacles and NFZs
+func recalculate_total_cells() -> void:
+	var raw_total := grid_size.x * grid_size.y * grid_size.z
+	var total_blocked = blocked_cells.size()
+	
+	for coord in obstacle_cells:
+		if not blocked_cells.has(coord):
+			total_blocked += 1
+			
+	total_cells_count = float(raw_total - total_blocked)
+	
+	# Request a consolidated log print at the end of the frame
+	if not _summary_pending:
+		_summary_pending = true
+		_print_summary_deferred.call_deferred()
+
+
+# Consolidated print output runs once at the end of the frame
+func _print_summary_deferred() -> void:
+	_summary_pending = false
+	var raw_total := grid_size.x * grid_size.y * grid_size.z
+	var nfz_blocked = blocked_cells.size()
+	var obstacle_blocked = obstacle_cells.size()
+	
+	print("GridManager: Reset completed. Total Base Flyable: %d | Raw Total: %d | NFZ Blocked: %d | Obstacle Blocked: %d" % [
+		int(total_cells_count),
+		raw_total,
+		nfz_blocked,
+		obstacle_blocked
+	])
 
 func mark_yellow_zone_as_visited(center_pos: Vector3i, forward_dir: Vector3) -> void:
 	var fov_threshold = cos(deg_to_rad(camera_fov / 2.0))
@@ -246,7 +186,7 @@ func mark_yellow_zone_as_visited(center_pos: Vector3i, forward_dir: Vector3) -> 
 				if is_within_bounds(world_coord):
 					if is_inside_camera_frustum(offset, forward_dir, fov_threshold):
 						if not visited_cells.has(world_coord):
-							if blocked_cells.has(world_coord):
+							if blocked_cells.has(world_coord) or obstacle_cells.has(world_coord):
 								print("CRITICAL: A blocked cell was marked as visited!")
 							visited_cells[world_coord] = true
 							
@@ -264,6 +204,8 @@ func reset_grid() -> void:
 		grid_logger.clear_episode_data()
 	
 	visited_cells.clear()
+	obstacle_cells.clear() # Clear dynamic obstacles out for the new run
+	recalculate_total_cells() # Reset flyable space total back to base level
 	
 	for coord in trail_meshes.keys():
 		var mesh_inst = trail_meshes[coord]
@@ -277,7 +219,7 @@ func reset_grid() -> void:
 	last_drone_grid_pos = Vector3i(99999, 99999, 99999)
 	last_drone_forward = Vector3.ZERO
 	
-	print("GridManager: Map has been reset for new episode.")
+	print("GridManager: Map and obstacles have been reset for new episode.")
 
 func preallocate_yellow_grid() -> void:
 	var diameter = (yellow_radius * 2) + 1
@@ -347,11 +289,7 @@ func _process(_delta: float) -> void:
 		_find_drone()
 		return
 	
-	var drone_grid_pos = Vector3i(
-		floor(drone.global_position.x),
-		floor(drone.global_position.y),
-		floor(drone.global_position.z)
-	)
+	var drone_grid_pos = world_to_grid(drone.global_position)
 	var forward_dir = drone.global_transform.basis.z.normalized()
 	
 	var moved = drone_grid_pos != last_drone_grid_pos
@@ -407,14 +345,13 @@ func get_coverage_percentage() -> float:
 func print_coverage_stats() -> void:
 	var percentage = get_coverage_percentage()
 	var visited_count = visited_cells.size()
-	# Optional verbose tracking:
-	# print("Coverage: %.2f%% (%d / %.0f cells)" % [percentage, visited_count, total_cells_count])
 
 func is_within_bounds(coord: Vector3i) -> bool:
 	return (coord.x >= 0 and coord.x < grid_size.x and
 		coord.y >= 0 and coord.y < grid_size.y and
 		coord.z >= 0 and coord.z < grid_size.z and
-		not blocked_cells.has(coord))
+		not blocked_cells.has(coord) and
+		not obstacle_cells.has(coord)) # Exclude dynamic obstacles too
 
 func is_within_local_bounds(coord: Vector3i, center_pos: Vector3i) -> bool:
 	return (
@@ -463,6 +400,46 @@ func _is_point_inside_zone(point: Vector3, zone: Node) -> bool:
 		elif p.y > max_z: max_z = p.y
 	return point.x >= min_x and point.x <= max_x and point.z >= min_z and point.z <= max_z
 
+func _is_point_near_zone_with_margin(point: Vector3, zone: Node, margin: float) -> bool:
+	if not ("polygon" in zone and "min_altitude" in zone and "max_altitude" in zone):
+		return false
+		
+	# Altitude boundary check with safety buffer
+	if point.y < (zone.min_altitude - margin) or point.y > (zone.max_altitude + margin):
+		return false
+		
+	var points_array = zone.polygon
+	if points_array.size() == 0:
+		return false
+		
+	var point_2d = Vector2(point.x, point.z)
+	
+	# If cell center is strictly inside, block it
+	if _is_point_inside_zone(point, zone):
+		return true
+		
+	# Check distance to each outer boundary segment of the polygon
+	var margin_sq = margin * margin
+	var n = points_array.size()
+	for i in range(n):
+		var a = points_array[i]
+		var b = points_array[(i + 1) % n]
+		if _point_to_segment_distance_sq(point_2d, a, b) <= margin_sq:
+			return true
+			
+	return false
+
+func _point_to_segment_distance_sq(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab = b - a
+	var ap = p - a
+	var l2 = ab.length_squared()
+	if l2 == 0.0:
+		return p.distance_squared_to(a)
+	var t = ap.dot(ab) / l2
+	t = clampf(t, 0.0, 1.0)
+	var closest = a + ab * t
+	return p.distance_squared_to(closest)
+
 # WAVEFRONT FRONTIER DETECTOR
 func is_frontier_cell(coord: Vector3i) -> bool:
 	if not is_within_bounds(coord) or not visited_cells.has(coord):
@@ -479,11 +456,7 @@ func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
 	if not is_instance_valid(drone):
 		return detected_frontiers
 
-	var start_pos = Vector3i(
-		floor(drone.global_position.x),
-		floor(drone.global_position.y),
-		floor(drone.global_position.z)
-	)
+	var start_pos = world_to_grid(drone.global_position)
 
 	if not visited_cells.has(start_pos):
 		return detected_frontiers
@@ -546,3 +519,142 @@ func get_frontier_centroids(min_frontier_size: int = 3) -> Array[Vector3]:
 		centroids.append(sum / float(cluster.size()))
 		
 	return centroids
+
+# =====================================================
+# A* PATHFINDING ON THE 3D GRID
+# =====================================================
+
+func find_path(start: Vector3i, end: Vector3i) -> Array[Vector3i]:
+	if not is_within_bounds(start) or not is_within_bounds(end):
+		return []
+
+	if start == end:
+		return [start]
+
+	var open_set: Array[Vector3i] = [start]
+	var came_from: Dictionary = {}
+
+	var g_score: Dictionary = {}
+	g_score[start] = 0.0
+
+	var f_score: Dictionary = {}
+	f_score[start] = _heuristic(start, end)
+
+	while open_set.size() > 0:
+		var current = open_set[0]
+		var lowest_f = f_score.get(current, INF)
+		
+		for node in open_set:
+			var score = f_score.get(node, INF)
+			if score < lowest_f:
+				current = node
+				lowest_f = score
+
+		if current == end:
+			return _reconstruct_path(came_from, current)
+
+		open_set.erase(current)
+
+		for dir in directions_26:
+			var neighbor = current + dir
+			
+			if not is_within_bounds(neighbor):
+				continue
+
+			# Skip step if transition cuts physical corners
+			if not is_diagonal_move_safe(current, neighbor):
+				continue
+
+			var move_cost = Vector3(dir).length()
+			var tentative_g = g_score[current] + move_cost
+
+			if tentative_g < g_score.get(neighbor, INF):
+				came_from[neighbor] = current
+				g_score[neighbor] = tentative_g
+				f_score[neighbor] = tentative_g + _heuristic(neighbor, end)
+				
+				if not open_set.has(neighbor):
+					open_set.append(neighbor)
+
+	return []
+
+func _heuristic(a: Vector3i, b: Vector3i) -> float:
+	return Vector3(a).distance_to(Vector3(b))
+
+func _reconstruct_path(came_from: Dictionary, current: Vector3i) -> Array[Vector3i]:
+	var total_path: Array[Vector3i] = [current]
+	while came_from.has(current):
+		current = came_from[current]
+		total_path.push_front(current)
+	return total_path
+
+func is_diagonal_move_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
+	var diff = to_coord - from_coord
+	var adx = abs(diff.x)
+	var ady = abs(diff.y)
+	var adz = abs(diff.z)
+	
+	var axes_changed = 0
+	if adx > 0: axes_changed += 1
+	if ady > 0: axes_changed += 1
+	if adz > 0: axes_changed += 1
+	
+	if axes_changed <= 1:
+		return true
+		
+	var dx = diff.x
+	var dy = diff.y
+	var dz = diff.z
+	
+	if axes_changed == 2:
+		if dx != 0 and dy != 0:
+			if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or blocked_cells.has(from_coord + Vector3i(0, dy, 0)) or obstacle_cells.has(from_coord + Vector3i(dx, 0, 0)) or obstacle_cells.has(from_coord + Vector3i(0, dy, 0)):
+				return false
+		elif dx != 0 and dz != 0:
+			if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or blocked_cells.has(from_coord + Vector3i(0, 0, dz)) or obstacle_cells.has(from_coord + Vector3i(dx, 0, 0)) or obstacle_cells.has(from_coord + Vector3i(0, 0, dz)):
+				return false
+		elif dy != 0 and dz != 0:
+			if blocked_cells.has(from_coord + Vector3i(0, dy, 0)) or blocked_cells.has(from_coord + Vector3i(0, 0, dz)) or obstacle_cells.has(from_coord + Vector3i(0, dy, 0)) or obstacle_cells.has(from_coord + Vector3i(0, 0, dz)):
+				return false
+				
+	elif axes_changed == 3:
+		if blocked_cells.has(from_coord + Vector3i(dx, 0, 0)) or \
+		   blocked_cells.has(from_coord + Vector3i(0, dy, 0)) or \
+		   blocked_cells.has(from_coord + Vector3i(0, 0, dz)) or \
+		   obstacle_cells.has(from_coord + Vector3i(dx, 0, 0)) or \
+		   obstacle_cells.has(from_coord + Vector3i(0, dy, 0)) or \
+		   obstacle_cells.has(from_coord + Vector3i(0, 0, dz)):
+			return false
+		if blocked_cells.has(from_coord + Vector3i(dx, dy, 0)) or \
+		   blocked_cells.has(from_coord + Vector3i(dx, 0, dz)) or \
+		   blocked_cells.has(from_coord + Vector3i(0, dy, dz)) or \
+		   obstacle_cells.has(from_coord + Vector3i(dx, dy, 0)) or \
+		   obstacle_cells.has(from_coord + Vector3i(dx, 0, dz)) or \
+		   obstacle_cells.has(from_coord + Vector3i(0, dy, dz)):
+			return false
+			
+	return true
+
+func is_straight_path_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
+	var current = from_coord
+	var diff = to_coord - from_coord
+	
+	var steps = max(abs(diff.x), max(abs(diff.y), abs(diff.z)))
+	if steps == 0:
+		return true
+		
+	var step_dir = Vector3i(
+		roundi(float(diff.x) / steps),
+		roundi(float(diff.y) / steps),
+		roundi(float(diff.z) / steps)
+	)
+	
+	for i in range(steps):
+		var next_cell = current + step_dir
+		if not is_within_bounds(next_cell):
+			return false
+		if not is_diagonal_move_safe(current, next_cell):
+			return false
+		current = next_cell
+		
+	return true

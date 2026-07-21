@@ -78,6 +78,7 @@ func _apply_mouse_mode() -> void:
 
 
 func _manual_camera_movement(delta: float) -> void:
+	projection = Camera3D.PROJECTION_PERSPECTIVE
 	var move_speed = 35.0 * delta
 	
 	var forward = -global_transform.basis.z
@@ -97,6 +98,7 @@ func _manual_camera_movement(delta: float) -> void:
 
 
 func _follow_leader_camera(delta: float) -> void:
+	projection = Camera3D.PROJECTION_PERSPECTIVE
 	if swarm_controller == null or not is_instance_valid(swarm_controller.current_leader):
 		return
 		

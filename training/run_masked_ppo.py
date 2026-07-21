@@ -13,7 +13,8 @@ import numpy as np
 import torch
 from godot_rl.core.godot_env import GodotEnv
 from ppo_masked import MaskedPPO, PPOConfig
-
+import gymnasium as gym
+from gymnasium.spaces import Discrete, Tuple, Dict
 
 def split_obs_and_mask(obs_dict, num_actions):
     """
@@ -164,25 +165,54 @@ def main():
     # =========================================================================
     # DYNAMIC CONFIGURATION OF OBSERVATION AND ACTION SPACE DIMENSIONS
     # =========================================================================
-    num_actions = args.num_actions
+    num_actions = getattr(args, 'num_actions', None)
+
     if num_actions is None:
         action_space = env.action_space
-        # If godot-rl returns spaces wrapped in a list/tuple, unpack the first index
+        print("Raw action space:", action_space)
+        
+        # Unwrap godot-rl list/tuple wrapper if present
         if isinstance(action_space, (list, tuple)) and len(action_space) > 0:
             action_space = action_space[0]
+            print("Unwrapped action space:", action_space)
+        
+        # === New robust detection logic ===
+        num_actions = None
+        
+        # 1. Dict style (godot-rl dict-of-dicts)
         if isinstance(action_space, dict):
             if "flight_waypoint" in action_space:
-                num_actions = int(action_space["flight_waypoint"]["size"])
+                num_actions = int(action_space["flight_waypoint"].get("size", 0))
             else:
-                first_key = list(action_space.keys())[0]
-                num_actions = int(action_space[first_key]["size"])
-        elif hasattr(action_space, "n"):
+                # take first key
+                first_key = next(iter(action_space))
+                val = action_space[first_key]
+                num_actions = int(val.get("size", 0) if isinstance(val, dict) else 0)
+        
+        # 2. Gym Tuple / Dict (most common in godot-rl)
+        elif hasattr(action_space, 'spaces'):
+            if isinstance(action_space, gym.spaces.Tuple) and len(action_space.spaces) > 0:
+                inner = action_space.spaces[0]          # e.g. Discrete(78)
+                if hasattr(inner, 'n'):
+                    num_actions = inner.n
+            elif "flight_waypoint" in action_space.spaces:
+                num_actions = action_space.spaces["flight_waypoint"].n
+            else:
+                # fallback: first subspace
+                first_space = next(iter(action_space.spaces.values()))
+                if hasattr(first_space, 'n'):
+                    num_actions = first_space.n
+        
+        # 3. Simple Discrete / MultiDiscrete
+        elif hasattr(action_space, 'n'):
             num_actions = action_space.n
-        elif hasattr(action_space, "spaces") and "flight_waypoint" in action_space.spaces:
-            num_actions = action_space.spaces["flight_waypoint"].n
+        
+        # Final fallback
+        if num_actions is None:
+            num_actions = 104
+            print("Warning: Could not auto-detect action space, using safe fallback 104")
         else:
-            num_actions = 78  # Safe fallback
-        print(f"Auto-detected action space size (num_actions): {num_actions}")
+            print(f"Auto-detected action space size: {num_actions}")
 
     obs_dim = args.obs_dim
     if obs_dim is None:
@@ -201,7 +231,7 @@ def main():
         elif hasattr(obs_space, "shape"):
             obs_dim = obs_space.shape[0]
         else:
-            obs_dim = 19  # Safe fallback
+            obs_dim = 25  # Safe fallback
         print(f"Auto-detected observation space dimensions (obs_dim): {obs_dim}")
     # =========================================================================
 
@@ -247,6 +277,7 @@ def main():
     current_lengths = np.zeros(args.num_envs, dtype=np.float32)
 
     global_step = 0
+    debug_step_counter = 0
     update_idx = 0
     start_time = time.time()
 
@@ -267,12 +298,44 @@ def main():
             # Accumulate current trajectory statistics
             current_rewards += rewards_arr
             current_lengths += 1.0
+            debug_step_counter += 1
+
+            # Debug printing every 256 steps of environment execution (rolling averages of completed episodes)
+            if debug_step_counter % 256 == 0:
+                if len(episode_lengths_history) > 0:
+                    mean_final_length = np.mean(episode_lengths_history)
+                    mean_final_reward = np.mean(episode_rewards_history)
+                    # Mean of step-level average rewards across the completed episodes history
+                    mean_avg_step_reward = np.mean([
+                        r / l for r, l in zip(episode_rewards_history, episode_lengths_history) if l > 0
+                    ])
+                else:
+                    mean_final_length = 0.0
+                    mean_final_reward = 0.0
+                    mean_avg_step_reward = 0.0
+
+                print(f"\n--- [Debug Log] Step: {debug_step_counter} ---")
+                print(f"  Mean Final Episode Length: {mean_final_length:.2f}")
+                print(f"  Mean Final Episode Reward: {mean_final_reward:.4f}")
+                print(f"  Mean Step Reward (Overall): {mean_avg_step_reward:.4f}")
+                print("-" * 30 + "\n")
 
             # Store stats for any parallel environment that completed this step
             for env_idx, is_done in enumerate(dones_bool):
                 if is_done:
-                    episode_rewards_history.append(current_rewards[env_idx])
-                    episode_lengths_history.append(current_lengths[env_idx])
+                    final_reward = current_rewards[env_idx]
+                    final_length = current_lengths[env_idx]
+                    avg_step_reward = final_reward / final_length if final_length > 0 else 0.0
+
+                    print(
+                        f"[Episode Complete] Env {env_idx} | "
+                        f"Final Length: {final_length:>5.0f} | "
+                        f"Final Reward: {final_reward:>9.2f} | "
+                        f"Avg Reward/Step: {avg_step_reward:.4f}"
+                    )
+
+                    episode_rewards_history.append(final_reward)
+                    episode_lengths_history.append(final_length)
                     current_rewards[env_idx] = 0.0
                     current_lengths[env_idx] = 0.0
 

@@ -1,6 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://dcglcyp7gvwi7"]
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_ualc2"]
+size = Vector3(10, 10, 10)
 
 [sub_resource type="BoxMesh" id="BoxMesh_veh3d"]
 size = Vector3(10, 10, 10)
@@ -8,7 +9,6 @@ size = Vector3(10, 10, 10)
 [node name="MovingGroundObstacle" type="RigidBody3D"]
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-transform = Transform3D(10, 0, 0, 0, 10, 0, 0, 0, 10, 0, 0, 0)
 shape = SubResource("BoxShape3D_ualc2")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
