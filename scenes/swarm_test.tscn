@@ -184,6 +184,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 57.5118, 17.7835, 124.991)
 process_mode = 4
 visible = false
 script = ExtResource("15_2mx36")
+speed = 10.0
 
 [node name="Ground" type="Node3D" parent="Obstacles/Moving"]
 process_mode = 4

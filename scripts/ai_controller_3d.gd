@@ -8,32 +8,36 @@ extends AIController3D
 @export var max_tracked_obstacles: int = 3 # K-nearest obstacles to track
 
 # Safeguarded initialization to prevent startup crashes if GridManager is not yet ready
-@onready var max_action_radius: float = (grid_manager.local_search_radius - 1) if is_instance_valid(grid_manager) and "local_search_radius" in grid_manager else 10.0
+#@onready var max_action_radius: float = (grid_manager.local_search_radius - 1) if is_instance_valid(grid_manager) and "local_search_radius" in grid_manager else 10.0
 
 # Scaling constants for clean normalization
 @export var max_velocity_reference: float = 5.0     # Expected max speed of the drone
 @export var max_distance_reference: float = 30.0    # Distance ceiling for NFZ and Obstacle observations
-@export var completion_bonus: float = 10.0          
-@export var nfz_violation_penalty: float = 5.0      
-@export var obstacle_collision_penalty: float = 10.0 # Penalty for hitting an obstacle
+@export var completion_bonus: float = 2000.0          
+@export var nfz_violation_penalty: float = 500.0      
+@export var obstacle_collision_penalty: float = 1000.0 # Penalty for hitting an obstacle
 
 var cached_centroids: Array = []
 var _cached_nfz_nodes: Array = [] 
 var actions_taken := 0
 var previous_coverage := 0.0
 var previous_discovered_voxels := 0
-var coverage_threshold = 85
+var coverage_threshold = 80
 var violated := false
 var hit_obstacle := false # Tracks if the drone hit an obstacle during the step
 var _signals_connected := false # Track signal status
 
 # Discrete action space variables
-var directions_26: Array[Vector3i] = []
+const DIRECTIONS = [
+	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1)
+]
 const OFFSETS = [1]#, 5, 10]
 
 func _ready() -> void:
 	super._ready()
-	_initialize_directions()
+	#_initialize_directions()
 	_connect_drone_signals()
 
 func _process(_delta: float) -> void:
@@ -85,26 +89,26 @@ func _connect_drone_signals() -> void:
 			if not drone_node.collided.is_connected(_on_drone_collided):
 				drone_node.collided.connect(_on_drone_collided)
 			_signals_connected = true
-			print("AI Controller successfully connected to Drone collision signals.")
+			#print("AI Controller successfully connected to Drone collision signals.")
 
 func _on_drone_collided(collider: Node) -> void:
 	if not violated and not hit_obstacle:
 		hit_obstacle = true
 		
-		print("--- OBSTACLE COLLISION REGISTERED ---")
-		print("Drone Position: ", navigator.drone.global_position)
-		print("Hit Object: ", collider.name)
-		print("--------------------------------------")
+		#print("--- OBSTACLE COLLISION REGISTERED ---")
+		#print("Drone Position: ", navigator.drone.global_position)
+		#print("Hit Object: ", collider.name)
+		#print("--------------------------------------")
 
 # Initialize the 26 adjacent 3D spatial directions
-func _initialize_directions() -> void:
-	directions_26.clear()
-	for x in [-1, 0, 1]:
-		for y in [-1, 0, 1]:
-			for z in [-1, 0, 1]:
-				if x == 0 and y == 0 and z == 0:
-					continue
-				directions_26.append(Vector3i(x, y, z))
+#func _initialize_directions() -> void:
+	#directions_26.clear()
+	#for x in [-1, 0, 1]:
+		#for y in [-1, 0, 1]:
+			#for z in [-1, 0, 1]:
+				#if x == 0 and y == 0 and z == 0:
+					#continue
+				#directions_26.append(Vector3i(x, y, z))
 
 # Helper to find the current grid cell coordinate of the drone
 func _get_current_grid_pos() -> Vector3i:
@@ -149,7 +153,7 @@ func get_obs() -> Dictionary:
 	]
 	
 	var action_mask: Array[float] = []
-	action_mask.resize(78)
+	action_mask.resize(DIRECTIONS.size() * OFFSETS.size())
 	action_mask.fill(0.0)
 	
 	if not is_instance_valid(navigator) or not is_instance_valid(navigator.drone) or not is_instance_valid(grid_manager):
@@ -164,19 +168,19 @@ func get_obs() -> Dictionary:
 	var vel = navigator.drone.linear_velocity if navigator.drone is RigidBody3D else navigator.velocity
 	var grid_limits = Vector3(grid_manager.grid_size)
 
-	var norm_pos_x = clampf(pos.x / grid_limits.x, 0.0, 1.0)
-	var norm_pos_y = clampf(pos.y / grid_limits.y, 0.0, 1.0)
-	var norm_pos_z = clampf(pos.z / grid_limits.z, 0.0, 1.0)
-
-	var norm_vel_x = clampf(vel.x / max_velocity_reference, -1.0, 1.0)
-	var norm_vel_y = clampf(vel.y / max_velocity_reference, -1.0, 1.0)
-	var norm_vel_z = clampf(vel.z / max_velocity_reference, -1.0, 1.0)
+	#var norm_pos_x = clampf(pos.x / grid_limits.x, 0.0, 1.0)
+	#var norm_pos_y = clampf(pos.y / grid_limits.y, 0.0, 1.0)
+	#var norm_pos_z = clampf(pos.z / grid_limits.z, 0.0, 1.0)
+#
+	#var norm_vel_x = clampf(vel.x / max_velocity_reference, -1.0, 1.0)
+	#var norm_vel_y = clampf(vel.y / max_velocity_reference, -1.0, 1.0)
+	#var norm_vel_z = clampf(vel.z / max_velocity_reference, -1.0, 1.0)
 
 	var coverage = grid_manager.get_coverage_percentage() / 100.0
 		
 	obs = [ 
-		norm_pos_x, norm_pos_y, norm_pos_z,
-		norm_vel_x, norm_vel_y, norm_vel_z,
+		pos.x, pos.y, pos.z,
+		vel.x, vel.y, vel.z,
 		coverage
 	]
 	
@@ -185,7 +189,7 @@ func get_obs() -> Dictionary:
 	var centroids: Array = []
 	
 	if not navigator.has_target or cached_centroids.is_empty():
-		centroids = grid_manager.get_frontier_centroids(3)
+		centroids = grid_manager.get_frontier_centroids(max_tracked_frontiers)
 		cached_centroids = centroids 
 	else:
 		centroids = cached_centroids 
@@ -198,9 +202,12 @@ func get_obs() -> Dictionary:
 	for i in range(max_tracked_frontiers):
 		if i < centroids.size():
 			var rel_vector = centroids[i] - pos
-			frontier_obs.append(clampf(rel_vector.x / search_radius, -1.0, 1.0))
-			frontier_obs.append(clampf(rel_vector.y / search_radius, -1.0, 1.0))
-			frontier_obs.append(clampf(rel_vector.z / search_radius, -1.0, 1.0))
+			frontier_obs.append(rel_vector.x)
+			frontier_obs.append(rel_vector.y)
+			frontier_obs.append(rel_vector.z)
+			#frontier_obs.append(clampf(rel_vector.x / search_radius, -1.0, 1.0))
+			#frontier_obs.append(clampf(rel_vector.y / search_radius, -1.0, 1.0))
+			#frontier_obs.append(clampf(rel_vector.z / search_radius, -1.0, 1.0))
 		else:
 			frontier_obs.append(0.0)
 			frontier_obs.append(0.0)
@@ -225,12 +232,12 @@ func get_obs() -> Dictionary:
 	for i in range(max_tracked_frontiers):
 		if i < distance_mappings.size():
 			var rel_vec = distance_mappings[i].rel_vector
-			var norm_x = clampf(rel_vec.x / max_distance_reference, -1.0, 1.0)
-			var norm_y = clampf(rel_vec.y / max_distance_reference, -1.0, 1.0)
-			var norm_z = clampf(rel_vec.z / max_distance_reference, -1.0, 1.0)
-			nfz_relative_vectors.append(norm_x)
-			nfz_relative_vectors.append(norm_y)
-			nfz_relative_vectors.append(norm_z)
+			#var norm_x = clampf(rel_vec.x / max_distance_reference, -1.0, 1.0)
+			#var norm_y = clampf(rel_vec.y / max_distance_reference, -1.0, 1.0)
+			#var norm_z = clampf(rel_vec.z / max_distance_reference, -1.0, 1.0)
+			nfz_relative_vectors.append(rel_vec.x)
+			nfz_relative_vectors.append(rel_vec.y)
+			nfz_relative_vectors.append(rel_vec.z)
 		else:
 			nfz_relative_vectors.append(1.0)
 			nfz_relative_vectors.append(1.0)
@@ -258,16 +265,22 @@ func get_obs() -> Dictionary:
 				obs_velocity = obs_node.velocity
 			
 			var rel_vel = obs_velocity - vel
-			
+			#print("OBSTACLE ", i," : " ,rel_pos)
 			# Relative Position
-			obstacle_obs.append(clampf(rel_pos.x / max_distance_reference, -1.0, 1.0))
-			obstacle_obs.append(clampf(rel_pos.y / max_distance_reference, -1.0, 1.0))
-			obstacle_obs.append(clampf(rel_pos.z / max_distance_reference, -1.0, 1.0))
-			
-			# Relative Velocity
-			obstacle_obs.append(clampf(rel_vel.x / max_velocity_reference, -1.0, 1.0))
-			obstacle_obs.append(clampf(rel_vel.y / max_velocity_reference, -1.0, 1.0))
-			obstacle_obs.append(clampf(rel_vel.z / max_velocity_reference, -1.0, 1.0))
+			obstacle_obs.append(rel_pos.x)
+			obstacle_obs.append(rel_pos.y)
+			obstacle_obs.append(rel_pos.z)
+			#obstacle_obs.append(clampf(rel_pos.x / max_distance_reference, -1.0, 1.0))
+			#obstacle_obs.append(clampf(rel_pos.y / max_distance_reference, -1.0, 1.0))
+			#obstacle_obs.append(clampf(rel_pos.z / max_distance_reference, -1.0, 1.0))
+			#
+			## Relative Velocity
+			obstacle_obs.append(rel_vel.x)
+			obstacle_obs.append(rel_vel.y)
+			obstacle_obs.append(rel_vel.z)
+			#obstacle_obs.append(clampf(rel_vel.x / max_velocity_reference, -1.0, 1.0))
+			#obstacle_obs.append(clampf(rel_vel.y / max_velocity_reference, -1.0, 1.0))
+			#obstacle_obs.append(clampf(rel_vel.z / max_velocity_reference, -1.0, 1.0))
 		else:
 			# Padding (default safe values: distant offset, zero velocity difference)
 			obstacle_obs.append(1.0)
@@ -279,15 +292,16 @@ func get_obs() -> Dictionary:
 			obstacle_obs.append(0.0)
 			
 	obs.append_array(obstacle_obs)
-	
-	# Compute action masks for the 78 discrete actions
+	#print("TOTAL OBS: " ,obs)	
+
+	# Compute action masks for the discrete actions
 	action_mask.clear()
 	var current_grid_pos = _get_current_grid_pos()
 	
 	for offset_idx in range(len(OFFSETS)):
 		var step = OFFSETS[offset_idx]
-		for dir_idx in range(directions_26.size()):
-			var dir = directions_26[dir_idx]
+		for dir_idx in range(DIRECTIONS.size()):
+			var dir = DIRECTIONS[dir_idx]
 			var target_coord = current_grid_pos + (dir * step)
 			
 			# Verify straight-line path is safe from corner clipping or obstacles
@@ -306,13 +320,11 @@ func get_obs() -> Dictionary:
 # =====================================================
 # REWARD
 # =====================================================
-
 func get_reward() -> float:
 	if not is_instance_valid(grid_manager):
 		return 0.0
 
-	var coverage = grid_manager.get_coverage_percentage() 
-	
+	# 1. Handle terminal failures immediately, even if en route
 	if violated:
 		reward = -nfz_violation_penalty
 		done = true
@@ -324,8 +336,15 @@ func get_reward() -> float:
 		done = true
 		needs_reset = true
 		return reward
-	
+
+	# 2. Return 0.0 while in transit to prevent stale reward accumulation
+	if navigator.has_target:
+		return 0.0
+
+	# 3. Calculate rewards once a waypoint is reached/decision point is active
+	var coverage = grid_manager.get_coverage_percentage() 
 	var current_voxels = 0
+	
 	if grid_manager.has_method("get_explored_count"):
 		current_voxels = grid_manager.get_explored_count()
 	elif grid_manager.has_method("get_discovered_count"):
@@ -334,35 +353,36 @@ func get_reward() -> float:
 		var total_cells = grid_manager.grid_size.x * grid_manager.grid_size.y * grid_manager.grid_size.z
 		current_voxels = floor((coverage / 100.0) * total_cells)
 
-	if not navigator.has_target: 
-		var new_voxels_discovered = current_voxels - previous_discovered_voxels
-		reward = float(new_voxels_discovered) * 0.01
-		#reward -= 0.0001 * actions_taken
-		
-		if is_instance_valid(navigator.drone):
-			var pos = navigator.drone.global_position
-			var centroids = grid_manager.get_frontier_centroids(3)
-			if centroids.size() > 0:
-				var closest_dist = INF
-				for c in centroids:
-					var d = pos.distance_to(c)
-					if d < closest_dist:
-						closest_dist = d
-				
-				var proximity_shaping = 0.5 / (1.0 + closest_dist)
-				reward += proximity_shaping
-		
-		if coverage >= coverage_threshold:
-			reward += completion_bonus
-			print("EPISODE STEPS : ", n_steps ," , ACTIONS TAKEN : " , actions_taken," DONE!!!!! ")
-			done = true
-			needs_reset = true
+	var new_voxels_discovered = current_voxels - previous_discovered_voxels
+	reward = float(new_voxels_discovered) * 0.01
+	#reward -= 0.0001 * actions_taken
+	
+	# Proximity shaping calculations
+	if is_instance_valid(navigator.drone):
+		var pos = navigator.drone.global_position
+		var centroids = grid_manager.get_frontier_centroids(max_tracked_frontiers)
+		if centroids.size() > 0:
+			var closest_dist = INF
+			for c in centroids:
+				var d = pos.distance_to(c)
+				if d < closest_dist:
+					closest_dist = d
 			
-		previous_coverage = coverage
-		previous_discovered_voxels = current_voxels
+			var proximity_shaping = 0.5 / (1.0 + closest_dist)
+			reward += proximity_shaping * 10
+	
+	# 4. Handle success/completion
+	if coverage >= coverage_threshold:
+		reward += completion_bonus
+		print("EPISODE STEPS : ", n_steps, " , ACTIONS TAKEN : ", actions_taken, " DONE!!!!! ")
+		done = true
+		needs_reset = true
 		
+	# Update tracking variables
+	previous_coverage = coverage
+	previous_discovered_voxels = current_voxels
+	
 	return reward
-
 # =====================================================
 # TERMINATION
 # =====================================================
@@ -400,7 +420,7 @@ func get_action_space() -> Dictionary:
 	return {
 		"flight_waypoint": {
 			"action_type": "discrete",
-			"size": 26
+			"size": DIRECTIONS.size() * OFFSETS.size()
 		}
 	}
 
@@ -439,15 +459,15 @@ func set_action(action) -> void:
 	else:
 		action_idx = int(action)
 
-	action_idx = clampi(action_idx, 0, 77)
+	action_idx = clampi(action_idx, 0, DIRECTIONS.size() * OFFSETS.size()-1)
 	actions_taken += 1
 
 	var current_grid_pos = _get_current_grid_pos()
 
-	var direction_idx = action_idx % 26
-	var offset_idx = action_idx / 26
+	var direction_idx = action_idx % DIRECTIONS.size() 
+	var offset_idx = action_idx / DIRECTIONS.size() 
 
-	var selected_direction = directions_26[direction_idx]
+	var selected_direction = DIRECTIONS[direction_idx]
 	var selected_offset = OFFSETS[offset_idx]
 
 	var target_coord = current_grid_pos + (selected_direction * selected_offset)

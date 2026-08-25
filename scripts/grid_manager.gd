@@ -6,7 +6,7 @@ extends Node3D
 @export var yellow_radius: int = 5
 @export var camera_fov: float = 90.0
 @export var boundary_thickness: float = 0.2
-@export var local_search_radius: int = 16
+@export var local_search_radius: int = 6
 
 # Safety Clearance Margin (accounts for physical drone size + tracking errors)
 @export var obstacle_safety_margin: float = 0.65 
@@ -24,16 +24,16 @@ var last_drone_forward: Vector3 = Vector3.ZERO
 var total_cells_count: float = 0.0
 var _summary_pending := false # Prevents console spam by debouncing the print
 
-const DIRECTIONS_3D = [
+const DIRECTIONS = [
 	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
 	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
 	Vector3i(0, 0, 1), Vector3i(0, 0, -1)
 ]
 
-var directions_26: Array[Vector3i] = []
+#var directions_26: Array[Vector3i] = []
 
 func _ready() -> void:
-	_initialize_directions_26()
+	#_initialize_directions_26()
 	
 	blue_material = StandardMaterial3D.new()
 	blue_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -54,14 +54,14 @@ func _ready() -> void:
 	await get_tree().process_frame
 	initialize_grid_space()
 
-func _initialize_directions_26() -> void:
-	directions_26.clear()
-	for x in [-1, 0, 1]:
-		for y in [-1, 0, 1]:
-			for z in [-1, 0, 1]:
-				if x == 0 and y == 0 and z == 0:
-					continue
-				directions_26.append(Vector3i(x, y, z))
+#func _initialize_directions_26() -> void:
+	#DIRECTIONS.clear()
+	#for x in [-1, 0, 1]:
+		#for y in [-1, 0, 1]:
+			#for z in [-1, 0, 1]:
+				#if x == 0 and y == 0 and z == 0:
+					#continue
+				#DIRECTIONS.append(Vector3i(x, y, z))
 
 func initialize_grid_space() -> void:
 	blocked_cells.clear()
@@ -219,7 +219,7 @@ func reset_grid() -> void:
 	last_drone_grid_pos = Vector3i(99999, 99999, 99999)
 	last_drone_forward = Vector3.ZERO
 	
-	print("GridManager: Map and obstacles have been reset for new episode.")
+	#print("GridManager: Map and obstacles have been reset for new episode.")
 
 func preallocate_yellow_grid() -> void:
 	var diameter = (yellow_radius * 2) + 1
@@ -444,7 +444,7 @@ func _point_to_segment_distance_sq(p: Vector2, a: Vector2, b: Vector2) -> float:
 func is_frontier_cell(coord: Vector3i) -> bool:
 	if not is_within_bounds(coord) or not visited_cells.has(coord):
 		return false
-	for dir in DIRECTIONS_3D:
+	for dir in DIRECTIONS:
 		var neighbor = coord + dir
 		if is_within_bounds(neighbor) and not visited_cells.has(neighbor):
 			return true
@@ -486,7 +486,7 @@ func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
 				if is_frontier_cell(q):
 					new_frontier.append(q)
 					
-					for dir in DIRECTIONS_3D:
+					for dir in DIRECTIONS:
 						var w = q + dir
 						if is_within_local_bounds(w, start_pos) and not visited_f.has(w):
 							if is_frontier_cell(w):
@@ -499,7 +499,7 @@ func find_frontiers(min_frontier_size: int = 3) -> Array[Array]:
 			for cell in new_frontier:
 				visited_m[cell] = true
 
-		for dir in DIRECTIONS_3D:
+		for dir in DIRECTIONS:
 			var v = p + dir
 			if is_within_local_bounds(v, start_pos) and not visited_m.has(v):
 				if visited_cells.has(v):
@@ -555,7 +555,7 @@ func find_path(start: Vector3i, end: Vector3i) -> Array[Vector3i]:
 
 		open_set.erase(current)
 
-		for dir in directions_26:
+		for dir in DIRECTIONS:
 			var neighbor = current + dir
 			
 			if not is_within_bounds(neighbor):

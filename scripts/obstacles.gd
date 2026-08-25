@@ -62,9 +62,9 @@ func spawn_random_obstacle():
 	
 	# Random X and Z positions
 	var pos = Vector3(
-		rng.randf_range(-spawn_box_size.x/2, spawn_box_size.x/2) + spawn_center.x,
+		rng.randf_range(-spawn_box_size.x/2, spawn_box_size.x/2) + spawn_center.x + 2,
 		spawn_y,
-		rng.randf_range(-spawn_box_size.z/2, spawn_box_size.z/2) + spawn_center.z
+		rng.randf_range(-spawn_box_size.z/2, spawn_box_size.z/2) + spawn_center.z + 2
 	)
 	
 	obstacle.position = pos
