@@ -1,12 +1,16 @@
 class_name Drone
 extends RigidBody3D
 
-
 @onready var ai_controller = $AIController3D
 @onready var bumper: Area3D = get_node_or_null("Bumper") # Reference to the new Area3D bumper node
 
 @export var drone_color: Color = Color.WHITE
 @export var drone_id: int = -1
+
+# Battery Configuration
+@export var max_battery: float = 1200.0 # Time in seconds until the battery depletes (e.g., 20 minutes)
+var current_battery: float = 1200.0
+
 signal collided(collider: Node)
 var target_waypoint: Vector3 = Vector3.INF
 var assigned_waypoint_index: int = -1
@@ -32,16 +36,15 @@ const SMOOTH := 6.0
 
 var coverage := 0.0
 
-
 var current_target_pos: Vector3 = Vector3.ZERO
 var has_target: bool = false
 
-
 func _ready() -> void:
-	if ai_controller!=null:
+	if ai_controller != null:
 		ai_controller.init(self)
 	_apply_color()
 	randomize()
+	reset_battery()
 	
 	# Connect the Area3D bumper's body_entered signal instead of the rigid body's contact monitor
 	if bumper != null:
@@ -62,8 +65,9 @@ func _on_bumper_body_entered(body: Node) -> void:
 	collided.emit(body)
 	
 func game_over():
-	ai_controller.done = true
-	ai_controller.needs_reset = true
+	if ai_controller != null:
+		ai_controller.done = true
+		ai_controller.needs_reset = true
 
 func _process(_delta: float) -> void:
 	is_in_no_fly_zone()
@@ -127,6 +131,15 @@ func reset_flight_state(pos: Vector3, rot: Vector3 = Vector3.ZERO) -> void:
 	sleeping = false
 	clear_targets()
 	is_leader = false
+	reset_battery()
+
+func get_battery_ratio() -> float:
+	if max_battery <= 0.0:
+		return 0.0
+	return clampf(current_battery / max_battery, 0.0, 1.0)
+
+func reset_battery() -> void:
+	current_battery = max_battery
 
 func get_rl_observation() -> Dictionary:
 	return {
@@ -137,17 +150,20 @@ func get_rl_observation() -> Dictionary:
 		"angular_velocity": _vector3_to_array(angular_velocity),
 		"is_leader": is_leader,
 		"has_waypoint": target_waypoint != Vector3.INF,
-		"waypoint": [] if target_waypoint == Vector3.INF else _vector3_to_array(target_waypoint)
+		"waypoint": [] if target_waypoint == Vector3.INF else _vector3_to_array(target_waypoint),
+		"battery_ratio": get_battery_ratio()
 	}
 
 func set_boids_data(drones_list: Array[Drone]) -> void:
 	all_drones = drones_list
 
 func _physics_process(delta: float) -> void:
-	if ai_controller !=null:
+	# Slowly drain battery over time
+	current_battery = maxf(current_battery - delta, 0.0)
+
+	if ai_controller != null:
 		if ai_controller.needs_reset:
 			ai_controller.reset()
-			#drone.reset()
 			return
 	
 	if target_waypoint != Vector3.INF:
