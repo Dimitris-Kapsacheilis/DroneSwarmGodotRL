@@ -14,7 +14,20 @@ extends Node3D
 var zones: Array[NoFlyZone] = []
 
 func _ready() -> void:
+	randomize()
 	generate_random_zones()
+
+# Public reset method called by AIController3D on episode reset
+func reset_nfz() -> void:
+	clear_zones()
+	generate_random_zones()
+
+func clear_zones() -> void:
+	for zone in zones:
+		if is_instance_valid(zone):
+			remove_child(zone) # Immediately detach from tree so GridManager doesn't scan it
+			zone.queue_free()
+	zones.clear()
 
 func generate_random_zones() -> void:
 	var placed_rects: Array[Rect2] = []

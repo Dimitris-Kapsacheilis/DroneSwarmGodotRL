@@ -160,8 +160,7 @@ text = "0 %"
 
 [node name="Obstacles" type="Node3D" parent="."]
 script = ExtResource("14_srhl7")
-spawn_count = 3
-spawn_box_size = Vector3(30, 30, 30)
+spawn_count = 2
 ground_static_scene = ExtResource("15_3il8t")
 ground_moving_scene = ExtResource("18_mpqok")
 flying_static_scene = ExtResource("16_awipf")

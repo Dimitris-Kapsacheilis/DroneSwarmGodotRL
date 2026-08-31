@@ -2,6 +2,7 @@ extends Node3D
 
 const Drone = preload("res://scripts/drone.gd")
 var rng = RandomNumberGenerator.new()
+
 @export var drone_packed_scene: PackedScene
 @export var num_drones: int = 1
 @export var spawn_height: float = 8.0
@@ -9,13 +10,13 @@ var rng = RandomNumberGenerator.new()
 @export var follow_spread: float = 4.5
 @export var grid_manager: Node3D # Assign your GridManager here in the Inspector
 
-@export var waypoints: Array[Vector3] = [
-	#Vector3(0, 12, 0),
-	#Vector3(20, 18, -30),
-	#Vector3(-25, 15, 25),
-	#Vector3(35, 22, 10),
-	#Vector3(-10, 10, -45)
-]
+# ---------------------------------------------------------------------------
+# Spawn Configuration
+# ---------------------------------------------------------------------------
+@export var random_spawn: bool = true
+@export var default_spawn_position: Vector3 = Vector3(0.5, 0.5, 0.5)
+
+@export var waypoints: Array[Vector3] = []
 
 var drones: Array[Drone] = []
 var leader_index: int = 0
@@ -73,6 +74,7 @@ const FORMATION_KEYS := {
 }
 
 func _ready() -> void:
+	rng.randomize()
 	_ensure_input_actions()
 
 	if not drone_packed_scene:
@@ -82,17 +84,11 @@ func _ready() -> void:
 	for i in range(num_drones):
 		var drone: Drone = drone_packed_scene.instantiate()
 
-		# Set exported values before add_child so the drone's _ready() sees them.
 		drone.drone_id = i
 		drone.drone_color = _drone_colors[i % _drone_colors.size()]
 		drone.swarm_controller = self
 
 		add_child(drone)
-		drone.global_position = Vector3(
-			(i - float(num_drones - 1) / 2.0) * 5.0,
-			spawn_height,
-			0.0
-		)
 		drones.append(drone)
 		if grid_manager:
 			grid_manager.drone = drone
@@ -100,9 +96,9 @@ func _ready() -> void:
 	if drones.is_empty():
 		push_error("Swarm has no drones. Increase num_drones above zero.")
 		return
-	# Pass the reference directly to the GridManager
-	else :
+	else:
 		reset_swarm_pos()
+
 	_create_waypoint_markers()
 	set_leader(0)
 	set_formation("line")
@@ -111,17 +107,75 @@ func _ready() -> void:
 	print("I = toggle swarm/individual mode, TAB = toggle waypoint mode")
 	print("1-6 = select leader/drone, F1-F5 = assign waypoint")
 
+# =====================================================
+# SPAWN & RESET LOGIC
+# =====================================================
+
 func reset_swarm_pos() -> void:
-	for drone in drones:
-		var i = 0
-		drone.global_position = Vector3(0,0,0
-			#rng.randf_range(0,grid_manager.grid_size.x),
-			#rng.randf_range(0,grid_manager.grid_size.y),
-			#rng.randf_range(0,grid_manager.grid_size.z)
-			)
-		
-	
-	
+	var occupied_cells: Dictionary = {}
+
+	for i in range(drones.size()):
+		var drone = drones[i]
+		var spawn_pos: Vector3 = Vector3.ZERO
+
+		if random_spawn:
+			spawn_pos = _get_random_free_cell(occupied_cells)
+		else:
+			# Non-random default position (at or near 0,0,0 with slight offset if multiple)
+			spawn_pos = default_spawn_position + Vector3(i * 1.0, 0, 0)
+
+		# Record cell to avoid placing two drones in the exact same cell
+		if is_instance_valid(grid_manager) and grid_manager.has_method("world_to_grid"):
+			occupied_cells[grid_manager.world_to_grid(spawn_pos)] = true
+
+		drone.global_position = spawn_pos
+
+		# Reset physical state and velocities
+		if drone is RigidBody3D:
+			drone.linear_velocity = Vector3.ZERO
+			drone.angular_velocity = Vector3.ZERO
+		elif "velocity" in drone:
+			drone.velocity = Vector3.ZERO
+
+		if drone.has_method("clear_targets"):
+			drone.clear_targets()
+
+# Finds a random free cell strictly outside of NFZs and obstacles
+func _get_random_free_cell(occupied_cells: Dictionary) -> Vector3:
+	if not is_instance_valid(grid_manager):
+		return default_spawn_position
+
+	var grid_size: Vector3i = grid_manager.grid_size if "grid_size" in grid_manager else Vector3i(30, 30, 30)
+	var max_attempts = 300
+
+	for _attempt in range(max_attempts):
+		var rx = rng.randi_range(0, grid_size.x - 1)
+		var ry = rng.randi_range(0, grid_size.y - 1)
+		var rz = rng.randi_range(0, grid_size.z - 1)
+		var coord = Vector3i(rx, ry, rz)
+
+		if occupied_cells.has(coord):
+			continue
+
+		var is_free = true
+		if grid_manager.has_method("is_cell_strictly_free"):
+			is_free = grid_manager.is_cell_strictly_free(coord)
+		else:
+			# Direct fallback
+			if "blocked_cells" in grid_manager and grid_manager.blocked_cells.has(coord):
+				is_free = false
+			elif "obstacle_cells" in grid_manager and grid_manager.obstacle_cells.has(coord):
+				is_free = false
+
+		if is_free:
+			return Vector3(coord.x + 0.5, coord.y + 0.5, coord.z + 0.5)
+
+	# Fallback if the grid is densely packed
+	return default_spawn_position
+
+# =====================================================
+# INPUT & FORMATION CONTROLS
+# =====================================================
 
 func _process(_delta: float) -> void:
 	if Input.is_action_just_pressed("toggle_waypoint"):
@@ -157,7 +211,6 @@ func _ensure_input_actions() -> void:
 	for action in FORMATION_ACTIONS.keys():
 		_ensure_key_action(action, FORMATION_KEYS[action])
 
-
 func _ensure_key_action(action: StringName, physical_keycode: Key) -> void:
 	if not InputMap.has_action(action):
 		InputMap.add_action(action)
@@ -168,7 +221,6 @@ func _ensure_key_action(action: StringName, physical_keycode: Key) -> void:
 	var event := InputEventKey.new()
 	event.physical_keycode = physical_keycode
 	InputMap.action_add_event(action, event)
-
 
 func _handle_swarm_input() -> void:
 	for i in range(min(drones.size(), DRONE_SELECT_ACTIONS.size())):
@@ -196,7 +248,6 @@ func _handle_individual_input() -> void:
 			drones[selected_drone_index].go_to_waypoint(waypoints[i], i)
 			_set_waypoint_color(i, drones[selected_drone_index].drone_color)
 			print("Drone #", selected_drone_index + 1, " -> Waypoint #", i + 1)
-
 
 func _select_individual_drone(index: int) -> void:
 	if index < 0 or index >= drones.size():
@@ -232,7 +283,6 @@ func set_formation(new_formation: String) -> void:
 	current_formation = new_formation
 	print("Formation: ", current_formation.to_upper())
 	_update_formation_targets()
-
 
 func _followers_have_targets() -> bool:
 	for i in range(drones.size()):
