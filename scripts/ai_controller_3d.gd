@@ -14,15 +14,22 @@ extends AIController3D
 
 @export var max_velocity_reference: float = 5.0
 @export var max_distance_reference: float = 30.0
-@export var completion_bonus: float = 2000.0
-@export var nfz_violation_penalty: float = 500.0
-@export var obstacle_collision_penalty: float = 1000.0
-@export var battery_depletion_penalty: float = 1000.0
+
+# FIX: these are now actually used in get_reward() instead of hardcoded
+# literals. Values updated to match what the reward function had been using
+# (15 / 20 / 15 / 50 / 0.1) so nothing changes behaviorally — but now tuning
+# these in the Inspector actually has an effect.
+@export var completion_bonus: float = 50.0
+@export var nfz_violation_penalty: float = 15.0
+@export var obstacle_collision_penalty: float = 20.0
+@export var battery_depletion_penalty: float = 15.0
+@export var voxel_reward_weight: float = 0.1
+@export var time_step_penalty: float = 0.01
+@export var invalid_move_penalty: float = 1.0
 
 @export var frontier_shaping_weight: float = 1.0
 @export var obstacle_shaping_weight: float = 0.5
 @export var obstacle_danger_radius: float = 5.0
-@export var voxel_reward_weight: float = 0.01
 
 var cached_centroids: Array = []
 var _cached_nfz_nodes: Array = []
@@ -59,33 +66,39 @@ func _physics_process(_delta: float) -> void:
 
 	if is_instance_valid(navigator) and is_instance_valid(navigator.drone):
 		var drone_pos = navigator.drone.global_position
-		
+
 		if "current_battery" in navigator.drone and navigator.drone.current_battery <= 0.0:
 			battery_depleted = true
 			return
 
 		if _is_inside_any_nfz(drone_pos):
 			violated = true
-
-			# Diagnostic NFZ violation print
-			print("--- NFZ VIOLATION REGISTERED ---")
-			print("Drone Global Position: ", drone_pos)
-			print("Drone Grid Coordinate: ", _get_current_grid_pos())
-			print("Target Waypoint: ", navigator.current_target_pos)
-			print("Path Size Remaining: ", navigator.current_path.size())
-			if navigator.current_path.size() > 0:
-				print("Active Trajectory Queue: ", navigator.current_path)
-
-			for zone in _get_nfz_nodes():
-				if zone.has_method("contains_position") and zone.contains_position(drone_pos):
-					print("Violated Node ID: ", zone.name)
-					print("Boundary Altitude: [", zone.min_altitude, " - ", zone.max_altitude, "]")
-					print("Polygon Points: ", zone.polygon)
-			print("---------------------------------")
+#
+			#print("--- NFZ VIOLATION REGISTERED ---")
+			#print("Drone Global Position: ", drone_pos)
+			#print("Drone Grid Coordinate: ", _get_current_grid_pos())
+			#print("Target Waypoint: ", navigator.current_target_pos)
+			#print("Path Size Remaining: ", navigator.current_path.size())
+			#if navigator.current_path.size() > 0:
+				#print("Active Trajectory Queue: ", navigator.current_path)
+#
+			#for zone in _get_nfz_nodes():
+				#if zone.has_method("contains_position") and zone.contains_position(drone_pos):
+					#print("Violated Node ID: ", zone.name)
+					#print("Boundary Altitude: [", zone.min_altitude, " - ", zone.max_altitude, "]")
+					#print("Polygon Points: ", zone.polygon)
+			#print("---------------------------------")
 			return
 
 		_check_imminent_obstacle_danger(drone_pos)
 
+# Uses the enforcement-gated is_straight_path_safe() on purpose: with
+# enforce_blocked_cells = false this is a no-op (never cancels a flight),
+# which is intentional — the agent is meant to be free to fly into a hazard
+# and experience the consequence, not have the environment steer it away
+# mid-flight. This only becomes active if enforce_blocked_cells is ever
+# turned back on, or once obstacles are made to move again (it exists for
+# re-checking a path against obstacles that moved after the decision).
 func _check_imminent_obstacle_danger(drone_pos: Vector3) -> void:
 	if not is_instance_valid(grid_manager) or not grid_manager.has_method("is_straight_path_safe"):
 		return
@@ -125,12 +138,9 @@ func _get_current_grid_pos() -> Vector3i:
 # =====================================================
 # OBSERVATIONS & ACTION MASKING
 # =====================================================
-# =====================================================
-# FIXED OBSERVATIONS: Adding 6-Directional Clearance
-# =====================================================
 
 func get_obs() -> Dictionary:
-	var total_obs_size = 8 + (max_tracked_frontiers * 3) + (max_tracked_nfz * 3) + (max_tracked_obstacles * 6) + 6 # +6 for directional clearance
+	var total_obs_size = 8 + (max_tracked_frontiers * 3) + (max_tracked_nfz * 3) + (max_tracked_obstacles * 6) + 6
 
 	if not is_instance_valid(navigator) or not is_instance_valid(navigator.drone) or not is_instance_valid(grid_manager):
 		var empty_obs: Array = []
@@ -157,7 +167,7 @@ func get_obs() -> Dictionary:
 	var norm_vel_z = clampf(vel.z / max_velocity_reference, -1.0, 1.0)
 
 	var coverage = grid_manager.get_coverage_percentage() / 100.0
-	
+
 	var battery_ratio = 1.0
 	if navigator.drone.has_method("get_battery_ratio"):
 		battery_ratio = navigator.drone.get_battery_ratio()
@@ -232,38 +242,55 @@ func get_obs() -> Dictionary:
 			obstacle_obs.append(0.0); obstacle_obs.append(0.0); obstacle_obs.append(0.0)
 	obs.append_array(obstacle_obs)
 
-	# 4. FIX: 6-Directional Clearance Observation (Gives the unmasked network vision of what is directly ahead in all 6 directions)
+	# 4. 6-Directional Clearance Observation
+	# FIX: this now uses is_straight_path_hazardous(), which always reflects
+	# real obstacle/NFZ occupancy regardless of enforce_blocked_cells. The
+	# previous version used is_straight_path_safe(), whose obstacle-awareness
+	# is gated by enforce_blocked_cells — with that flag false (intentionally,
+	# so the agent can actually experience collisions and learn from them),
+	# this observation would otherwise always report every direction as
+	# "safe" even standing right next to an obstacle, leaving the agent with
+	# no usable signal at all. set_action() below is untouched and still uses
+	# the enforcement-gated check, so the agent remains free to actually fly
+	# into a hazard it was warned about.
 	var current_grid_pos = _get_current_grid_pos()
 	var directional_clearance: Array[float] = []
 	var action_mask: Array[float] = []
 
 	for dir_idx in range(DIRECTIONS.size()):
 		var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, dir_idx)
-		var is_safe = false
+		var is_hazard = true
 
-		if target_coord != current_grid_pos and grid_manager.is_within_bounds(target_coord):
-			if grid_manager.has_method("is_straight_path_safe"):
-				is_safe = grid_manager.is_straight_path_safe(current_grid_pos, target_coord)
+		if target_coord != current_grid_pos and grid_manager.is_within_grid_limits(target_coord):
+			if grid_manager.has_method("is_straight_path_hazardous"):
+				is_hazard = grid_manager.is_straight_path_hazardous(current_grid_pos, target_coord)
 			else:
-				is_safe = true
+				is_hazard = false
 
-		directional_clearance.append(1.0 if is_safe else -1.0)
-		action_mask.append(1.0 if is_safe else 0.0)
+		directional_clearance.append(-1.0 if is_hazard else 1.0)
+		action_mask.append(0.0 if is_hazard else 1.0)
 
 	obs.append_array(directional_clearance)
 
-	# Update potential tracking
+	# Update potential tracking (done at decision points only, matching the
+	# cadence get_reward() applies shaping at)
 	if not navigator.has_target:
 		_current_nearest_obstacle_dist = nearest_obstacle_dist if nearest_obstacle_dist != INF else max_distance_reference
+		if _prev_nearest_obstacle_dist < 0.0:
+			_prev_nearest_obstacle_dist = _current_nearest_obstacle_dist
+
 		if centroids.size() > 0:
 			var closest_d = INF
 			for c in centroids: closest_d = minf(closest_d, pos.distance_to(c))
 			_current_frontier_dist = closest_d
+			if _prev_frontier_dist < 0.0:
+				_prev_frontier_dist = _current_frontier_dist
 
 	var result: Dictionary = { "obs": obs }
 	if enable_action_masking:
 		result["action_mask"] = action_mask
 	return result
+
 # =====================================================
 # REWARD & TERMINATION
 # =====================================================
@@ -274,24 +301,24 @@ func get_reward() -> float:
 
 	# Terminal failures
 	if violated:
-		reward = -15.0
+		reward = -nfz_violation_penalty
 		done = true; needs_reset = true
 		return reward
 
 	if hit_obstacle:
-		reward = -20.0
+		reward = -obstacle_collision_penalty
 		done = true; needs_reset = true
 		return reward
 
 	if battery_depleted:
-		reward = -15.0
+		reward = -battery_depletion_penalty
 		done = true; needs_reset = true
 		return reward
 
 	# Penalty for trying to fly into wall/obstacle when unmasked
 	if _invalid_move_penalized:
 		_invalid_move_penalized = false
-		reward = -1.0
+		reward = -invalid_move_penalty
 		return reward
 
 	if navigator.has_target:
@@ -302,18 +329,36 @@ func get_reward() -> float:
 	var current_voxels = grid_manager.visited_cells.size()
 	var new_voxels = current_voxels - previous_discovered_voxels
 
-	reward = float(new_voxels) * 0.1 # Meaningful scale (+0.1 per voxel)
+	reward = float(new_voxels) * voxel_reward_weight
 
 	# Small time step penalty so drone doesn't loiter
-	reward -= 0.01
+	reward -= time_step_penalty
 
-	# Potential-based shaping
+	# ---- Potential-based frontier shaping ----
+	# Rewards genuine progress toward the nearest frontier (distance decreased
+	# since the last decision point), not raw proximity, so it can't be
+	# farmed by sitting near a frontier without exploring it.
 	if _prev_frontier_dist >= 0.0 and _current_frontier_dist >= 0.0:
 		reward += (_prev_frontier_dist - _current_frontier_dist) * frontier_shaping_weight
 	_prev_frontier_dist = _current_frontier_dist
 
+	# ---- Potential-based obstacle-avoidance shaping ----
+	# FIX: this block was missing entirely in the previous version even though
+	# obstacle_shaping_weight/obstacle_danger_radius and the distance trackers
+	# were still declared. Without it there was zero continuous training
+	# signal for obstacle avoidance beyond the sparse terminal collision
+	# penalty. Symmetric to the frontier term above: reward opening distance
+	# to the nearest obstacle, penalize closing it, only while within
+	# obstacle_danger_radius so it doesn't interfere with normal exploration
+	# far from any obstacle.
+	if _prev_nearest_obstacle_dist >= 0.0 and _current_nearest_obstacle_dist >= 0.0:
+		if _current_nearest_obstacle_dist < obstacle_danger_radius or _prev_nearest_obstacle_dist < obstacle_danger_radius:
+			var obstacle_progress = _current_nearest_obstacle_dist - _prev_nearest_obstacle_dist
+			reward += obstacle_progress * obstacle_shaping_weight
+	_prev_nearest_obstacle_dist = _current_nearest_obstacle_dist
+
 	if coverage >= coverage_threshold:
-		reward += 50.0 # Balanced completion bonus
+		reward += completion_bonus
 		print("EPISODE STEPS : ", n_steps, " , ACTIONS TAKEN : ", actions_taken, " , PERCENTAGE : %.2f%%" % coverage, " DONE!!!!! [SUCCESS]")
 		done = true; needs_reset = true
 
@@ -389,15 +434,13 @@ func set_action(action) -> void:
 	var current_grid_pos = _get_current_grid_pos()
 	var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, action_idx)
 
-	# FIX: If the unmasked policy picks an unsafe path or out of bounds, penalize immediately!
 	var is_safe = grid_manager.is_within_bounds(target_coord) and grid_manager.is_straight_path_safe(current_grid_pos, target_coord)
-	
+
 	if not is_safe:
-		_invalid_move_penalized = true # Immediate penalty applied in get_reward()
+		_invalid_move_penalized = true
 		target_coord = current_grid_pos
 
 	navigator.perform_action(target_coord)
-
 
 # =====================================================
 # RESET & UTILITIES
@@ -427,13 +470,20 @@ func reset() -> void:
 		elif nfz_manager.has_method("generate_zones"):
 			nfz_manager.generate_zones()
 
-	# 2. Reset dynamic obstacles
-	if is_instance_valid(obstacle_spawner) and obstacle_spawner.has_method("reset_obstacles"):
-		obstacle_spawner.reset_obstacles()
-
-	# 3. Rebuild Grid with new NFZs and Obstacles
+	# 2. Rebuild the grid BEFORE obstacles re-register.
+	# FIX: this used to run AFTER obstacle_spawner.reset_obstacles(). Since
+	# grid_manager.reset_grid() unconditionally clears obstacle_cells, running
+	# it after obstacles registered themselves wiped that registration out for
+	# the rest of the episode — obstacles would never be reflected in grid
+	# safety checks or the directional-clearance observation. Grid reset must
+	# happen first so obstacle registrations (via register_obstacle(), called
+	# from obstacle_spawner.reset_obstacles()) land afterward and stick.
 	if is_instance_valid(grid_manager):
 		grid_manager.reset_grid()
+
+	# 3. Reset dynamic obstacles (re-registers them into the now-clean grid)
+	if is_instance_valid(obstacle_spawner) and obstacle_spawner.has_method("reset_obstacles"):
+		obstacle_spawner.reset_obstacles()
 
 	# 4. Spawn/Position the Drone in a verified clear cell
 	if is_instance_valid(swarm_controller):
