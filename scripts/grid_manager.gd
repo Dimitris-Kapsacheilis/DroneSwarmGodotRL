@@ -7,7 +7,7 @@ extends Node3D
 @export var local_search_radius: int = 6
 
 # Safety Clearance Margin
-@export var obstacle_safety_margin: float = 0.65
+@export var obstacle_safety_margin: float = 2.0
 
 # ---------------------------------------------------------------------------
 # Drone Sensor & Visibility Settings

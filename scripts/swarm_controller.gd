@@ -108,25 +108,15 @@ func _ready() -> void:
 	print("1-6 = select leader/drone, F1-F5 = assign waypoint")
 
 # =====================================================
-# SPAWN & RESET LOGIC
+# SPAWN & RESET LOGIC (CLUSTERED BFS)
 # =====================================================
 
 func reset_swarm_pos() -> void:
-	var occupied_cells: Dictionary = {}
+	var spawn_positions = _find_clustered_free_cells(drones.size())
 
 	for i in range(drones.size()):
 		var drone = drones[i]
-		var spawn_pos: Vector3 = Vector3.ZERO
-
-		if random_spawn:
-			spawn_pos = _get_random_free_cell(occupied_cells)
-		else:
-			# Non-random default position (at or near 0,0,0 with slight offset if multiple)
-			spawn_pos = default_spawn_position + Vector3(i * 1.0, 0, 0)
-
-		# Record cell to avoid placing two drones in the exact same cell
-		if is_instance_valid(grid_manager) and grid_manager.has_method("world_to_grid"):
-			occupied_cells[grid_manager.world_to_grid(spawn_pos)] = true
+		var spawn_pos = spawn_positions[i]
 
 		drone.global_position = spawn_pos
 
@@ -140,38 +130,106 @@ func reset_swarm_pos() -> void:
 		if drone.has_method("clear_targets"):
 			drone.clear_targets()
 
-# Finds a random free cell strictly outside of NFZs and obstacles
-func _get_random_free_cell(occupied_cells: Dictionary) -> Vector3:
+# Finds a tight cluster of free cells around a random (or default) origin cell using BFS
+func _find_clustered_free_cells(count: int) -> Array[Vector3]:
+	var result: Array[Vector3] = []
+	if count <= 0:
+		return result
+
 	if not is_instance_valid(grid_manager):
-		return default_spawn_position
+		for i in range(count):
+			result.append(default_spawn_position + Vector3(i * 1.0, 0, 0))
+		return result
 
 	var grid_size: Vector3i = grid_manager.grid_size if "grid_size" in grid_manager else Vector3i(30, 30, 30)
-	var max_attempts = 300
+	var occupied_cells: Dictionary = {}
 
+	# 1. Pick the seed starting coordinate
+	var seed_coord: Vector3i = Vector3i.ZERO
+	if random_spawn:
+		seed_coord = _get_random_free_cell_coord(grid_size, occupied_cells)
+	else:
+		if grid_manager.has_method("world_to_grid"):
+			seed_coord = grid_manager.world_to_grid(default_spawn_position)
+		else:
+			seed_coord = Vector3i(int(default_spawn_position.x), int(default_spawn_position.y), int(default_spawn_position.z))
+
+	# 2. Pre-compute neighbor offsets sorted by distance for closest packing
+	var neighbor_offsets: Array[Vector3i] = []
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			for dz in range(-1, 2):
+				if dx != 0 or dy != 0 or dz != 0:
+					neighbor_offsets.append(Vector3i(dx, dy, dz))
+
+	# Sort so 1-unit direct neighbors are picked before diagonal neighbors
+	neighbor_offsets.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
+		return a.length_squared() < b.length_squared()
+	)
+
+	# 3. BFS search outward from seed
+	var queue: Array[Vector3i] = [seed_coord]
+	var visited: Dictionary = {seed_coord: true}
+
+	while queue.size() > 0 and result.size() < count:
+		var current = queue.pop_front()
+
+		if _is_cell_free(current, grid_size, occupied_cells):
+			occupied_cells[current] = true
+			result.append(_cell_to_world(current))
+
+		for offset in neighbor_offsets:
+			var neighbor = current + offset
+			if not visited.has(neighbor) and _is_in_bounds(neighbor, grid_size):
+				visited[neighbor] = true
+				queue.append(neighbor)
+
+	# 4. Fallback if the space was too constrained to fit all drones in one cluster
+	while result.size() < count:
+		var fallback_coord = _get_random_free_cell_coord(grid_size, occupied_cells)
+		occupied_cells[fallback_coord] = true
+		result.append(_cell_to_world(fallback_coord))
+
+	return result
+
+func _get_random_free_cell_coord(grid_size: Vector3i, occupied_cells: Dictionary) -> Vector3i:
+	var max_attempts = 300
 	for _attempt in range(max_attempts):
 		var rx = rng.randi_range(0, grid_size.x - 1)
 		var ry = rng.randi_range(0, grid_size.y - 1)
 		var rz = rng.randi_range(0, grid_size.z - 1)
 		var coord = Vector3i(rx, ry, rz)
 
-		if occupied_cells.has(coord):
-			continue
+		if _is_cell_free(coord, grid_size, occupied_cells):
+			return coord
 
-		var is_free = true
+	return Vector3i(int(default_spawn_position.x), int(default_spawn_position.y), int(default_spawn_position.z))
+
+func _is_cell_free(coord: Vector3i, grid_size: Vector3i, occupied_cells: Dictionary) -> bool:
+	if not _is_in_bounds(coord, grid_size):
+		return false
+	if occupied_cells.has(coord):
+		return false
+
+	if is_instance_valid(grid_manager):
 		if grid_manager.has_method("is_cell_strictly_free"):
-			is_free = grid_manager.is_cell_strictly_free(coord)
-		else:
-			# Direct fallback
-			if "blocked_cells" in grid_manager and grid_manager.blocked_cells.has(coord):
-				is_free = false
-			elif "obstacle_cells" in grid_manager and grid_manager.obstacle_cells.has(coord):
-				is_free = false
+			return grid_manager.is_cell_strictly_free(coord)
+		if "blocked_cells" in grid_manager and grid_manager.blocked_cells.has(coord):
+			return false
+		if "obstacle_cells" in grid_manager and grid_manager.obstacle_cells.has(coord):
+			return false
 
-		if is_free:
-			return Vector3(coord.x + 0.5, coord.y + 0.5, coord.z + 0.5)
+	return true
 
-	# Fallback if the grid is densely packed
-	return default_spawn_position
+func _is_in_bounds(coord: Vector3i, grid_size: Vector3i) -> bool:
+	return coord.x >= 0 and coord.x < grid_size.x and \
+		   coord.y >= 0 and coord.y < grid_size.y and \
+		   coord.z >= 0 and coord.z < grid_size.z
+
+func _cell_to_world(coord: Vector3i) -> Vector3:
+	if is_instance_valid(grid_manager) and grid_manager.has_method("grid_to_world"):
+		return grid_manager.grid_to_world(coord)
+	return Vector3(coord.x + 0.5, coord.y + 0.5, coord.z + 0.5)
 
 # =====================================================
 # INPUT & FORMATION CONTROLS

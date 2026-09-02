@@ -136,7 +136,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--gamma",
-    default=0.99,
+    default=0.999,
     type=float,
     help="Discount factor",
 )
