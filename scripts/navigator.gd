@@ -51,6 +51,9 @@ func _physics_process(delta: float) -> void:
 		draw_trajectory_line()
 
 func setup_visualizers() -> void:
+	# Do not build debug meshes in headless mode
+	if DisplayServer.get_name() == "headless":
+		return
 	if not is_instance_valid(drone):
 		return
 		
@@ -140,7 +143,7 @@ func cancel_current_target() -> void:
 	current_path.clear()
 	if is_instance_valid(sphere_inst):
 		sphere_inst.visible = false
-	if is_instance_valid(line_mesh):
+	if is_instance_valid(line_mesh) and DisplayServer.get_name() != "headless":
 		line_mesh.clear_surfaces()
 
 func reset_rl_stats() -> void:
@@ -219,6 +222,9 @@ func fly_along_path(delta: float) -> void:
 	drone.global_position = drone.global_position.move_toward(current_target_pos, flight_speed * delta)
 
 func draw_trajectory_line() -> void:
+	# Do not build debug meshes in headless mode
+	if DisplayServer.get_name() == "headless":
+		return
 	if not is_instance_valid(line_mesh) or not has_target or current_path.is_empty():
 		return
 	

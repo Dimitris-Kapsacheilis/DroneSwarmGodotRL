@@ -69,7 +69,7 @@ func trigger_swarm_failure(reason: String = "", agent_actions: int = -1) -> void
 					if is_instance_valid(nav) and "actions_taken" in nav:
 						total_actions += nav.actions_taken
 
-		print("[SWARM TERMINATION] -> Reason: %s | Coverage: %.2f%% | Actions Taken: %d" % [reason, coverage_val, total_actions])
+		print("PID: " , OS.get_process_id() ," [SWARM TERMINATION] -> Reason: %s | Coverage: %.2f%% | Actions Taken: %d" % [reason, coverage_val, total_actions])
 		swarm_failed = true
 
 func reset_environment() -> void:

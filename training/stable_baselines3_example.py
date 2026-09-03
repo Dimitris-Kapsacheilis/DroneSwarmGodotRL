@@ -49,7 +49,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--save_checkpoint_frequency",
-    default=100_000,
+    default=200_000,
     type=int,
     help="Save checkpoints every N environment steps",
 )
@@ -61,7 +61,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--timesteps",
-    default=5_000_000,  # Scaled to 5M steps for 95%+ precision
+    default=50_000_000,
     type=int,
     help="Total timesteps to train",
 )
@@ -97,34 +97,34 @@ parser.add_argument(
 )
 parser.add_argument(
     "--n_parallel",
-    default=1,  # Spawns parallel Godot instances for high throughput
+    default=8,  # Default to 8 instances (8 * 3 = 24 parallel agents)
     type=int,
-    help="Number of parallel Godot executable instances",
+    help="Number of parallel Godot executable instances (4 to 32)",
 )
 parser.add_argument("--learning_rate", default=3e-4, type=float, help="Initial learning rate")
 
-# --- HIGH-PRECISION HYPERPARAMETERS FOR MULTI-AGENT SWARMS ---
+# --- TUNED FOR 3 DRONES, 4-32 PARALLEL ENVS, 1.2K-5K STEP EPISODES ---
 parser.add_argument(
     "--n_steps",
-    default=1024,  # Larger horizon captures full flight-to-target paths
+    default=1024,  # Rollout length per drone. (Total buffer = n_steps * n_parallel * 3)
     type=int,
-    help="Number of steps to run for each drone per rollout",
+    help="Number of steps per drone per rollout",
 )
 parser.add_argument(
     "--batch_size",
-    default=512,  # Large batch size keeps multi-agent gradient updates stable
+    default=2048,  # Increased from 512 for large multi-agent rollout stability
     type=int,
     help="Minibatch size for PPO updates",
 )
 parser.add_argument(
     "--n_epochs",
-    default=10,
+    default=5,  # Reduced from 10 to prevent over-optimizing massive rollout buffers
     type=int,
     help="Number of optimization epochs per rollout",
 )
 parser.add_argument(
     "--ent_coef",
-    default=0.005,  # Balanced to allow exploration without jittering at goals
+    default=0.003,  # Slight reduction for steady late-stage precision
     type=float,
     help="Entropy coefficient",
 )
@@ -136,13 +136,13 @@ parser.add_argument(
 )
 parser.add_argument(
     "--gae_lambda",
-    default=0.98,  # Higher lambda reduces bias for long episodes
+    default=0.98,  # High lambda keeps variance low across long episodes
     type=float,
-    help="Factor for trade-off of bias vs variance for GAE",
+    help="GAE lambda",
 )
 parser.add_argument(
     "--gamma",
-    default=0.995,  # Higher gamma values rewards >300 steps in the future
+    default=0.998,  # High gamma critical for 1.2k-5k step long-horizon credit assignment
     type=float,
     help="Discount factor",
 )
@@ -163,7 +163,6 @@ def handle_model_save(model, env):
         print(f"Saving model to: {os.path.abspath(zip_save_path)}")
         model.save(zip_save_path)
         
-        # Save VecNormalize stats alongside model
         norm_path = zip_save_path.parent / f"{zip_save_path.stem}_vec_normalize.pkl"
         print(f"Saving VecNormalize stats to: {os.path.abspath(norm_path)}")
         env.save(str(norm_path))
@@ -231,20 +230,24 @@ else:
     )
 
 
-def linear_schedule(initial_value: float) -> Callable[[float], float]:
+def linear_schedule_with_floor(initial_value: float, min_fraction: float = 0.1) -> Callable[[float], float]:
+    """Decays to a minimum fraction (e.g. 10%) instead of 0.0 to prevent freeze."""
     def func(progress_remaining: float) -> float:
-        return progress_remaining * initial_value
+        return initial_value * (min_fraction + (1.0 - min_fraction) * progress_remaining)
     return func
 
 
-# Learning rate schedule decays to 0 by default for precision convergence
 use_linear_lr = not args.no_linear_lr_schedule
-learning_rate = linear_schedule(args.learning_rate) if use_linear_lr else args.learning_rate
+learning_rate = linear_schedule_with_floor(args.learning_rate, min_fraction=0.1) if use_linear_lr else args.learning_rate
 
-# Multi-Agent Coordination Network Architecture
+# Multi-Agent Coordination Network Architecture (Expanded for Swarm Policy)
 policy_kwargs = dict(
-    net_arch=dict(pi=[256, 256], vf=[256, 256])
+    net_arch=dict(pi=[512, 512], vf=[512, 512])
 )
+
+# Guard against batch_size > total_buffer_size
+total_buffer_size = args.n_steps * env.num_envs
+effective_batch_size = min(args.batch_size, total_buffer_size)
 
 model = None
 try:
@@ -254,7 +257,7 @@ try:
             env,
             learning_rate=learning_rate,
             n_steps=args.n_steps,
-            batch_size=args.batch_size,
+            batch_size=effective_batch_size,
             n_epochs=args.n_epochs,
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,

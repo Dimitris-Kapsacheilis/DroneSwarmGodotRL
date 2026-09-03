@@ -17,6 +17,8 @@ func _ready() -> void:
 
 # Ensures all mesh and material objects exist before setup assigns to them
 func _ensure_components_initialized() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
 	if mesh_instance == null:
 		mesh_instance = MeshInstance3D.new()
 		mesh_instance.name = "OutlineMesh"
@@ -58,6 +60,8 @@ func setup(
 	_update_visual_geometry()
 
 func _update_visual_geometry() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
 	if polygon.size() < 3:
 		return
 
@@ -117,6 +121,8 @@ func contains_position(pos: Vector3) -> bool:
 
 func update_drone_state(pos: Vector3) -> void:
 	drone_inside = contains_position(pos)
+	if DisplayServer.get_name() == "headless":
+		return
 	if drone_inside:
 		mat.albedo_color = Color(1, 0, 0, 1.0)
 		box_mat.albedo_color = Color(1, 0, 0, 0.4)

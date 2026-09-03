@@ -38,7 +38,8 @@ func _physics_process(_delta: float) -> void:
 # BOUNDARY LINE RENDERING (WIREFRAME CUBE)
 # =====================================================
 func _create_boundary_lines() -> void:
-	if not show_boundary_lines:
+# Skip boundary line rendering completely in headless mode
+	if not show_boundary_lines or DisplayServer.get_name() == "headless":
 		return
 
 	if is_instance_valid(_boundary_mesh_instance):

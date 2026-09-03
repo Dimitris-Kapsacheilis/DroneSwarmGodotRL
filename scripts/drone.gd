@@ -1,7 +1,7 @@
 class_name Drone
 extends RigidBody3D
 
-@onready var ai_controller = $AIController3D
+@onready var ai_controller: Node = get_node_or_null("AIController3D")
 @onready var bumper: Area3D = get_node_or_null("Bumper") # Reference to the new Area3D bumper node
 
 @export var drone_color: Color = Color.WHITE
@@ -40,9 +40,16 @@ var current_target_pos: Vector3 = Vector3.ZERO
 var has_target: bool = false
 
 func _ready() -> void:
-	if ai_controller != null:
+	if ai_controller == null:
+		ai_controller = get_node_or_null("AIController3D")
+	
+	if ai_controller != null and ai_controller.has_method("init"):
 		ai_controller.init(self)
-	_apply_color()
+	# ONLY apply materials/colors if we are NOT running headless
+	print("Display Mode :",DisplayServer.get_name())
+
+	if DisplayServer.get_name() != "headless":
+		_apply_color()
 	randomize()
 	reset_battery()
 	add_to_group("drones")
@@ -67,8 +74,10 @@ func _on_bumper_body_entered(body: Node) -> void:
 	
 func game_over():
 	if ai_controller != null:
-		ai_controller.done = true
-		ai_controller.needs_reset = true
+		if "done" in ai_controller:
+			ai_controller.done = true
+		if "needs_reset" in ai_controller:
+			ai_controller.needs_reset = true
 
 func _process(_delta: float) -> void:
 	is_in_no_fly_zone()
@@ -83,12 +92,18 @@ func is_in_no_fly_zone() -> bool:
 	return false	
 	
 func _apply_color() -> void:
+	# Double check to prevent dummy renderer crash
+	if DisplayServer.get_name() == "headless":
+		return
 	var meshes = find_children("*", "MeshInstance3D", true, true)
 	if meshes.is_empty():
 		push_error("Drone %d: No MeshInstance3D found in your drone.tscn!" % drone_id)
 		return
 
 	for mesh: MeshInstance3D in meshes:
+		# Ensure the mesh actually exists before overriding material
+		if mesh.mesh == null:
+			continue
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = drone_color
 		mat.emission_enabled = true
@@ -162,9 +177,15 @@ func _physics_process(delta: float) -> void:
 	# Slowly drain battery over time
 	current_battery = maxf(current_battery - delta, 0.0)
 
-	if ai_controller != null:
+	if ai_controller != null and "needs_reset" in ai_controller:
 		if ai_controller.needs_reset:
-			ai_controller.reset()
+			# 1. Reset the drone's physical body/velocities
+			reset_flight_state(global_position, Vector3.ZERO)
+			
+			# 2. Reset the RL controller state
+			if ai_controller.has_method("reset"):
+				ai_controller.reset()
+			ai_controller.needs_reset = false
 			return
 	
 	if target_waypoint != Vector3.INF:
