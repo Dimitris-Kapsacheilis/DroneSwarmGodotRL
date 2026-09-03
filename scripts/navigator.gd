@@ -27,10 +27,9 @@ func _ready() -> void:
 	if is_instance_valid(drone):
 		last_position = drone.global_position
 		
-		# Automatically disable gravity and physics forces if the drone is a RigidBody3D
+		# Automatically disable gravity and physics forces if RigidBody3D
 		if drone is RigidBody3D:
 			drone.freeze = true
-			print("Navigator: Automatically froze RigidBody3D drone to prevent gravity fighting.")
 			
 	await get_tree().process_frame
 	setup_visualizers()
@@ -40,7 +39,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	# Calculate velocity
-	velocity = (drone.global_position - last_position) / delta
+	velocity = (drone.global_position - last_position) / maxf(delta, 0.0001)
 	last_position = drone.global_position
 
 	# Auto-run if not in RL mode
@@ -58,6 +57,11 @@ func setup_visualizers() -> void:
 	var world_root = drone.get_parent()
 	if not world_root:
 		return
+
+	if is_instance_valid(sphere_inst):
+		sphere_inst.queue_free()
+	if is_instance_valid(line_inst):
+		line_inst.queue_free()
 
 	var sphere_mesh = SphereMesh.new()
 	sphere_mesh.radius = 0.35
@@ -92,28 +96,38 @@ func perform_action(target_coord: Vector3i) -> void:
 		return
 		
 	var clamped_coord = Vector3i(
-		clamped(target_coord.x, 0, grid_manager.grid_size.x - 1),
-		clamped(target_coord.y, 0, grid_manager.grid_size.y - 1),
-		clamped(target_coord.z, 0, grid_manager.grid_size.z - 1)
+		clampi(target_coord.x, 0, grid_manager.grid_size.x - 1),
+		clampi(target_coord.y, 0, grid_manager.grid_size.y - 1),
+		clampi(target_coord.z, 0, grid_manager.grid_size.z - 1)
 	)
 
 	var start_grid_pos = _get_current_grid_pos()
-	var grid_path = grid_manager.find_path(start_grid_pos, clamped_coord)
+	var raw_path = grid_manager.find_path(start_grid_pos, clamped_coord)
 	
 	current_path.clear()
 	
-	if grid_path.size() > 1:
-		for cell in grid_path:
-			var local_target = Vector3(cell.x + 0.5, cell.y + 0.5, cell.z + 0.5)
-			current_path.append(grid_manager.to_global(local_target))
+	if raw_path.size() > 0:
+		for point in raw_path:
+			if point is Vector3:
+				current_path.append(point)
+			elif point is Vector3i:
+				current_path.append(grid_manager.grid_to_world(point))
 		
+		# Remove starting waypoint if already there
+		if current_path.size() > 1 and drone.global_position.distance_to(current_path[0]) < arrival_threshold:
+			current_path.remove_at(0)
+	else:
+		# FALLBACK FOR RL: If A* refuses to path into hazard/obstacle,
+		# fly straight to the target so RL physically experiences the collision!
+		var target_world = grid_manager.grid_to_world(clamped_coord)
+		if drone.global_position.distance_to(target_world) > arrival_threshold:
+			current_path.append(target_world)
+
+	if current_path.size() > 0:
 		current_target_pos = current_path[0]
 		has_target = true
 	else:
-		# Safety fallback: do not execute straight-line moves on path calculation failure
-		#print("DEBUG WARNING: A* path planning failed from ", start_grid_pos, " to ", clamped_coord, ". Command rejected.")
 		has_target = false
-		current_path.clear()
 
 	actions_taken += 1
 
@@ -121,9 +135,21 @@ func perform_action(target_coord: Vector3i) -> void:
 		sphere_inst.global_position = current_path[-1]
 		sphere_inst.visible = true
 
+func cancel_current_target() -> void:
+	has_target = false
+	current_path.clear()
+	if is_instance_valid(sphere_inst):
+		sphere_inst.visible = false
+	if is_instance_valid(line_mesh):
+		line_mesh.clear_surfaces()
+
+func reset_rl_stats() -> void:
+	actions_taken = 0
+	cancel_current_target()
+
 func get_observation() -> Dictionary:
 	var coverage = 0.0
-	if is_instance_valid(grid_manager):
+	if is_instance_valid(grid_manager) and grid_manager.has_method("get_coverage_percentage"):
 		coverage = grid_manager.get_coverage_percentage()
 
 	var drone_pos = Vector3.ZERO
@@ -136,15 +162,6 @@ func get_observation() -> Dictionary:
 		"coverage": coverage
 	}
 
-func reset_rl_stats() -> void:
-	actions_taken = 0
-	has_target = false
-	current_path.clear()
-	if is_instance_valid(sphere_inst):
-		sphere_inst.visible = false
-	if is_instance_valid(line_mesh):
-		line_mesh.clear_surfaces()
-
 # ==========================================
 # NAVIGATION & MOVEMENT
 # ==========================================
@@ -155,16 +172,11 @@ func _get_current_grid_pos() -> Vector3i:
 	var drone_pos = drone.global_position
 	if grid_manager.has_method("world_to_grid"):
 		return grid_manager.world_to_grid(drone_pos)
-	elif grid_manager.has_method("global_to_map"):
-		return grid_manager.global_to_map(drone_pos)
-	else:
-		return Vector3i(
-			floor(drone_pos.x),
-			floor(drone_pos.y),
-			floor(drone_pos.z)
-		)
+	return Vector3i(int(floor(drone_pos.x)), int(floor(drone_pos.y)), int(floor(drone_pos.z)))
 
 func choose_new_random_target() -> void:
+	if not is_instance_valid(grid_manager):
+		return
 	var bounds = grid_manager.grid_size
 	var random_coord = Vector3i(
 		randi_range(0, bounds.x - 1),
@@ -179,11 +191,9 @@ func fly_along_path(delta: float) -> void:
 		return
 		
 	current_target_pos = current_path[0]
-	
 	var direction = (current_target_pos - drone.global_position)
 	var distance = direction.length()
 
-	# Progress to next waypoint segment once threshold is met
 	if distance <= arrival_threshold:
 		current_path.remove_at(0)
 		if current_path.is_empty():
@@ -200,13 +210,10 @@ func fly_along_path(delta: float) -> void:
 	if direction.length() > 0.001:
 		var forward = direction.normalized()
 		var temp_up = Vector3.UP
-		
 		if abs(forward.y) > 0.99:
 			temp_up = Vector3.FORWARD
-		
 		var right = temp_up.cross(forward).normalized()
 		var up = forward.cross(right).normalized()
-		
 		drone.global_transform.basis = Basis(right, up, forward)
 
 	drone.global_position = drone.global_position.move_toward(current_target_pos, flight_speed * delta)
@@ -226,6 +233,3 @@ func draw_trajectory_line() -> void:
 		line_mesh.surface_add_vertex(current_path[i + 1])
 		
 	line_mesh.surface_end()
-
-func clamped(val: int, min_val: int, max_val: int) -> int:
-	return max(min_val, min(val, max_val))

@@ -21,7 +21,7 @@ enabled=PackedStringArray("res://addons/godot_rl_agents/plugin.cfg")
 
 [global_group]
 
-drone=""
+drones=""
 
 [input]
 

@@ -45,6 +45,7 @@ func _ready() -> void:
 	_apply_color()
 	randomize()
 	reset_battery()
+	add_to_group("drones")
 	
 	# Connect the Area3D bumper's body_entered signal instead of the rigid body's contact monitor
 	if bumper != null:
