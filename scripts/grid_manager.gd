@@ -11,7 +11,19 @@ extends Node3D
 @export var boundary_color: Color = Color(0.2, 0.8, 1.0, 0.8) # Cyan wireframe
 @export var boundary_line_width: float = 2.0
 
-# Cell State Dictionaries (Key: Vector3i, Value: bool)
+@export_group("Trail Visualization")
+@export var show_trails: bool = true:
+	set(value):
+		show_trails = value
+		if is_instance_valid(_trail_multimesh_instance):
+			_trail_multimesh_instance.visible = show_trails
+			if show_trails:
+				_refresh_trail_mesh()
+@export_range(0.05, 1.0, 0.05) var trail_alpha: float = 0.45
+@export_range(0.1, 1.0, 0.05) var trail_scale: float = 0.85 # Size ratio inside cell
+
+# Cell State Dictionaries
+# visited_cells: Key: Vector3i, Value: Color (Color of the drone that visited it)
 var visited_cells: Dictionary = {}
 var obstacle_cells: Dictionary = {}
 var blocked_cells: Dictionary = {}
@@ -19,26 +31,91 @@ var blocked_cells: Dictionary = {}
 var total_traversable_cells: int = 0
 var _total_grid_volume: int = 0
 var _boundary_mesh_instance: MeshInstance3D = null
+var _trail_multimesh_instance: MultiMeshInstance3D = null
 
 func _ready() -> void:
 	_total_grid_volume = grid_size.x * grid_size.y * grid_size.z
 	total_traversable_cells = _total_grid_volume
 
 	_create_boundary_lines()
+	_setup_trail_visualizer()
 	reset_grid()
 
 func _physics_process(_delta: float) -> void:
-	# MULTI-AGENT: Sweeps and marks coverage for EVERY active drone in the swarm
+	# MULTI-AGENT: Sweeps and marks coverage for EVERY active drone in the swarm with its color
 	var drones = get_tree().get_nodes_in_group("drones")
+	var new_visited_marked: bool = false
+	
 	for drone in drones:
 		if is_instance_valid(drone) and not drone.is_queued_for_deletion():
-			_mark_visited_around(drone.global_position)
+			var drone_col: Color = drone.drone_color if "drone_color" in drone else Color.WHITE
+			if _mark_visited_around(drone.global_position, drone_col):
+				new_visited_marked = true
+
+	if new_visited_marked and show_trails:
+		_refresh_trail_mesh()
+
+# =====================================================
+# TRAIL VISUALIZATION (MULTIMESH)
+# =====================================================
+
+func _setup_trail_visualizer() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+
+	if is_instance_valid(_trail_multimesh_instance):
+		_trail_multimesh_instance.queue_free()
+
+	_trail_multimesh_instance = MultiMeshInstance3D.new()
+	_trail_multimesh_instance.name = "DroneTrailVisualizer"
+	add_child(_trail_multimesh_instance)
+
+	var mm = MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+
+	var box_mesh = BoxMesh.new()
+	box_mesh.size = Vector3.ONE * (cell_size * trail_scale)
+
+	var mat = StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = false
+	box_mesh.material = mat
+
+	mm.mesh = box_mesh
+	_trail_multimesh_instance.multimesh = mm
+	_trail_multimesh_instance.visible = show_trails
+
+func _refresh_trail_mesh() -> void:
+	if not show_trails or DisplayServer.get_name() == "headless" or _trail_multimesh_instance == null:
+		return
+
+	var mm = _trail_multimesh_instance.multimesh
+	if mm == null:
+		return
+
+	var count = visited_cells.size()
+	if mm.instance_count != count:
+		mm.instance_count = count
+
+	var idx = 0
+	for coord in visited_cells:
+		var color: Color = visited_cells[coord]
+		color.a = trail_alpha
+
+		var cell_world_pos = grid_to_world(coord)
+		var trans = Transform3D(Basis(), cell_world_pos)
+		
+		mm.set_instance_transform(idx, trans)
+		mm.set_instance_color(idx, color)
+		idx += 1
 
 # =====================================================
 # BOUNDARY LINE RENDERING (WIREFRAME CUBE)
 # =====================================================
 func _create_boundary_lines() -> void:
-# Skip boundary line rendering completely in headless mode
 	if not show_boundary_lines or DisplayServer.get_name() == "headless":
 		return
 
@@ -49,13 +126,12 @@ func _create_boundary_lines() -> void:
 	_boundary_mesh_instance.name = "GridBoundaryVisual"
 	add_child(_boundary_mesh_instance)
 
-	# Set top-level = false and global_position to (0,0,0) so lines are in world space
 	_boundary_mesh_instance.global_position = global_position
 
 	var mat = StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.0, 1.0, 1.0, 1.0) # Solid Cyan
-	mat.no_depth_test = true # Prevents floor/objects from hiding the boundary lines
+	mat.albedo_color = boundary_color
+	mat.no_depth_test = true
 	mat.render_priority = 2
 
 	var imm_mesh = ImmediateMesh.new()
@@ -91,7 +167,8 @@ func _create_boundary_lines() -> void:
 	imm_mesh.surface_end()
 
 	_boundary_mesh_instance.mesh = imm_mesh
-	_boundary_mesh_instance.material_override = mat # MUST BE material_override in Godot 4
+	_boundary_mesh_instance.material_override = mat
+
 # =====================================================
 # PATHFINDING (3D A* ALGORITHM)
 # =====================================================
@@ -109,7 +186,6 @@ func find_path(start_input, target_input) -> Array[Vector3]:
 		path.append(grid_to_world(target_coord))
 		return path
 
-	# If the exact target cell is inside an obstacle/NFZ, redirect to closest free adjacent cell
 	if not is_cell_strictly_free(target_coord):
 		target_coord = _find_nearest_free_neighbor(target_coord)
 		if target_coord == Vector3i(-1, -1, -1):
@@ -169,7 +245,6 @@ func find_path(start_input, target_input) -> Array[Vector3]:
 				if not open_set.has(neighbor):
 					open_set.append(neighbor)
 
-	# Direct path fallback if search exhausted
 	path.append(grid_to_world(target_coord))
 	return path
 
@@ -200,9 +275,10 @@ func _find_nearest_free_neighbor(coord: Vector3i) -> Vector3i:
 # COVERAGE & VISITATION
 # =====================================================
 
-func _mark_visited_around(world_pos: Vector3) -> void:
+func _mark_visited_around(world_pos: Vector3, drone_color: Color = Color.WHITE) -> bool:
 	var center_coord = world_to_grid(world_pos)
 	var radius_in_cells = int(ceil(sensor_radius / cell_size))
+	var new_cell_marked: bool = false
 
 	for dx in range(-radius_in_cells, radius_in_cells + 1):
 		for dy in range(-radius_in_cells, radius_in_cells + 1):
@@ -212,7 +288,11 @@ func _mark_visited_around(world_pos: Vector3) -> void:
 					var cell_world = grid_to_world(coord)
 					if world_pos.distance_squared_to(cell_world) <= sensor_radius * sensor_radius:
 						if not obstacle_cells.has(coord) and not blocked_cells.has(coord):
-							visited_cells[coord] = true
+							if not visited_cells.has(coord):
+								visited_cells[coord] = drone_color
+								new_cell_marked = true
+
+	return new_cell_marked
 
 func get_coverage_percentage() -> float:
 	if total_traversable_cells <= 0:
@@ -223,6 +303,9 @@ func reset_grid() -> void:
 	visited_cells.clear()
 	obstacle_cells.clear()
 	blocked_cells.clear()
+
+	if is_instance_valid(_trail_multimesh_instance) and _trail_multimesh_instance.multimesh != null:
+		_trail_multimesh_instance.multimesh.instance_count = 0
 
 	var root = get_tree().current_scene if get_tree() else null
 	if root:

@@ -352,7 +352,7 @@ func get_reward() -> float:
 		reward += completion_bonus
 		done = true; needs_reset = true
 		if is_instance_valid(swarm_controller):
-			swarm_controller.trigger_swarm_failure("Coverage Success [SUCCESS]", actions_taken)
+			swarm_controller.trigger_swarm_failure("Coverage Success [SUCCESS] !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", actions_taken)
 
 	previous_discovered_voxels = current_voxels
 	return reward

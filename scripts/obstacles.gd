@@ -14,10 +14,10 @@ extends Node3D
 @export var max_obstacle_scale: float = 1.0
 
 ## Minimum open corridor space between obstacles, NFZs, and map boundaries
-@export var drone_clearance: float = 5.0
+@export var drone_clearance: float = 4.0
 
 ## Clear radius around the center/spawn point (0,0,0)
-@export var spawn_safe_radius: float = 4.0
+@export var spawn_safe_radius: float = 5.0
 
 # ---------------------------------------------------------------------------
 # Spawn Area
@@ -49,7 +49,7 @@ func spawn_all_obstacles() -> void:
 
 func spawn_random_obstacle() -> void:
 	var is_flying = rng.randf() < 0.5
-	var is_moving = rng.randf() < 0.0 # Set to > 0.0 if moving obstacles are enabled
+	var is_moving = rng.randf() < 0.99 # Set to > 0.0 if moving obstacles are enabled
 	
 	var obstacle: Node3D
 	if is_flying:

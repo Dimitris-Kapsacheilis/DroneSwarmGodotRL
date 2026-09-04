@@ -1,6 +1,7 @@
-[gd_scene load_steps=30 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=31 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
+[ext_resource type="Script" path="res://scenes/swarm_test.gd" id="1_vuxhg"]
 [ext_resource type="Script" path="res://addons/godot_rl_agents/sync.gd" id="1_wjrew"]
 [ext_resource type="PackedScene" uid="uid://c7nf1r4taf5q5" path="res://scenes/drone.tscn" id="2_fl1ek"]
 [ext_resource type="Script" path="res://scripts/NoFlyZone.gd" id="3_63cna"]
@@ -62,6 +63,7 @@ emission_enabled = true
 albedo_color = Color(0, 0, 0, 1)
 
 [node name="Swarm Test" type="Node3D"]
+script = ExtResource("1_vuxhg")
 
 [node name="Sync" type="Node" parent="."]
 script = ExtResource("1_wjrew")
@@ -157,6 +159,15 @@ offset_bottom = 23.0
 theme_override_colors/font_color = Color(0.976471, 0.988235, 0, 1)
 theme_override_font_sizes/font_size = 50
 text = "0 %"
+
+[node name="CameraMode" type="Label" parent="HUD"]
+layout_mode = 0
+offset_top = 100.0
+offset_right = 40.0
+offset_bottom = 123.0
+theme_override_colors/font_color = Color(0.976471, 0.988235, 0, 1)
+theme_override_font_sizes/font_size = 40
+autowrap_mode = 2
 
 [node name="Obstacles" type="Node3D" parent="."]
 script = ExtResource("14_srhl7")

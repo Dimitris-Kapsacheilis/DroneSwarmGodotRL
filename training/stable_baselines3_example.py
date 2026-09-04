@@ -3,8 +3,13 @@ import os
 import pathlib
 from typing import Callable
 
+import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import (
+    BaseCallback,
+    CallbackList,
+    CheckpointCallback,
+)
 from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
 from stable_baselines3.common.vec_env.vec_normalize import VecNormalize
 
@@ -53,6 +58,19 @@ parser.add_argument(
     type=int,
     help="Save checkpoints every N environment steps",
 )
+# --- BEST MODEL SAVING ARGUMENTS ---
+parser.add_argument(
+    "--best_model_start_step",
+    default=50_000,
+    type=int,
+    help="Step count after which best model tracking and saving starts",
+)
+parser.add_argument(
+    "--best_model_check_freq",
+    default=5_000,
+    type=int,
+    help="Frequency (in steps) to check if the rolling mean reward reached a new high",
+)
 parser.add_argument(
     "--onnx_export_path",
     default=None,
@@ -80,7 +98,7 @@ parser.add_argument(
 parser.add_argument(
     "--viz",
     action="store_true",
-    help="Display simulation window during training (caps FPS to display refresh rate)",
+    help="Display simulation window during training",
     default=False,
 )
 parser.add_argument(
@@ -97,34 +115,34 @@ parser.add_argument(
 )
 parser.add_argument(
     "--n_parallel",
-    default=8,  # Default to 8 instances (8 * 3 = 24 parallel agents)
+    default=1,
     type=int,
-    help="Number of parallel Godot executable instances (4 to 32)",
+    help="Number of parallel Godot executable instances",
 )
 parser.add_argument("--learning_rate", default=3e-4, type=float, help="Initial learning rate")
 
-# --- TUNED FOR 3 DRONES, 4-32 PARALLEL ENVS, 1.2K-5K STEP EPISODES ---
+# --- HYPERPARAMETERS ---
 parser.add_argument(
     "--n_steps",
-    default=1024,  # Rollout length per drone. (Total buffer = n_steps * n_parallel * 3)
+    default=1024,
     type=int,
-    help="Number of steps per drone per rollout",
+    help="Number of steps per rollout",
 )
 parser.add_argument(
     "--batch_size",
-    default=2048,  # Increased from 512 for large multi-agent rollout stability
+    default=2048,
     type=int,
     help="Minibatch size for PPO updates",
 )
 parser.add_argument(
     "--n_epochs",
-    default=5,  # Reduced from 10 to prevent over-optimizing massive rollout buffers
+    default=5,
     type=int,
     help="Number of optimization epochs per rollout",
 )
 parser.add_argument(
     "--ent_coef",
-    default=0.003,  # Slight reduction for steady late-stage precision
+    default=0.003,
     type=float,
     help="Entropy coefficient",
 )
@@ -136,13 +154,13 @@ parser.add_argument(
 )
 parser.add_argument(
     "--gae_lambda",
-    default=0.98,  # High lambda keeps variance low across long episodes
+    default=0.98,
     type=float,
     help="GAE lambda",
 )
 parser.add_argument(
     "--gamma",
-    default=0.998,  # High gamma critical for 1.2k-5k step long-horizon credit assignment
+    default=0.998,
     type=float,
     help="Discount factor",
 )
@@ -150,45 +168,99 @@ parser.add_argument(
 args, extras = parser.parse_known_args()
 
 
+class RollingBestModelCallback(BaseCallback):
+    """
+    Tracks the rolling mean reward of completed training episodes in real-time.
+    Immediately saves best_model.zip and VecNormalize stats without stopping Godot.
+    """
+    def __init__(
+        self,
+        check_freq_steps: int,
+        save_path: str,
+        start_step: int = 50_000,
+        min_episodes: int = 10,
+        verbose: int = 1,
+    ):
+        super().__init__(verbose)
+        self.check_freq_steps = check_freq_steps
+        self.save_path = save_path
+        self.start_step = start_step
+        self.min_episodes = min_episodes
+        self.best_mean_reward = -np.inf
+
+    def _init_callback(self) -> None:
+        if self.save_path is not None:
+            os.makedirs(self.save_path, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        # Only start tracking after reaching start_step
+        if self.num_timesteps < self.start_step:
+            return True
+
+        if self.n_calls % self.check_freq_steps == 0:
+            ep_buffer = self.model.ep_info_buffer
+            if ep_buffer and len(ep_buffer) >= self.min_episodes:
+                mean_reward = float(np.mean([ep_info["r"] for ep_info in ep_buffer]))
+                mean_len = float(np.mean([ep_info["l"] for ep_info in ep_buffer]))
+
+                if mean_reward > self.best_mean_reward:
+                    if self.verbose > 0:
+                        print(
+                            f"\n>>> [BestModel] Step {self.num_timesteps:,} (Buffer: {len(ep_buffer)} eps): "
+                            f"New best mean reward: {mean_reward:.2f} (prev: {self.best_mean_reward:.2f}, avg len: {mean_len:.1f}). Saving..."
+                        )
+                    self.best_mean_reward = mean_reward
+
+                    # 1. Save model weights
+                    model_path = os.path.join(self.save_path, "best_model.zip")
+                    self.model.save(model_path)
+
+                    # 2. Save VecNormalize statistics
+                    vec_norm = self.model.get_vec_normalize_env()
+                    if vec_norm is not None:
+                        norm_path = os.path.join(self.save_path, "best_model_vec_normalize.pkl")
+                        vec_norm.save(norm_path)
+
+        return True
+
+
 def handle_onnx_export(model):
-    if args.onnx_export_path is not None:
+    if args.onnx_export_path is not None and model is not None:
         path_onnx = pathlib.Path(args.onnx_export_path).with_suffix(".onnx")
         print(f"Exporting ONNX to: {os.path.abspath(path_onnx)}")
         export_model_as_onnx(model, str(path_onnx))
 
 
 def handle_model_save(model, env):
-    if args.save_model_path is not None:
+    if args.save_model_path is not None and model is not None:
         zip_save_path = pathlib.Path(args.save_model_path).with_suffix(".zip")
         print(f"Saving model to: {os.path.abspath(zip_save_path)}")
         model.save(zip_save_path)
         
-        norm_path = zip_save_path.parent / f"{zip_save_path.stem}_vec_normalize.pkl"
-        print(f"Saving VecNormalize stats to: {os.path.abspath(norm_path)}")
-        env.save(str(norm_path))
+        vec_norm = model.get_vec_normalize_env() if hasattr(model, "get_vec_normalize_env") else None
+        if vec_norm is not None:
+            norm_path = zip_save_path.parent / f"{zip_save_path.stem}_vec_normalize.pkl"
+            print(f"Saving VecNormalize stats to: {os.path.abspath(norm_path)}")
+            vec_norm.save(str(norm_path))
 
 
 def close_env(env):
-    try:
-        print("Closing environment...")
-        env.close()
-    except Exception as e:
-        print(f"Exception while closing env: {e}")
+    if env is not None:
+        try:
+            print("Closing environment...")
+            env.close()
+        except Exception as e:
+            print(f"Exception while closing env: {e}")
 
 
 def cleanup(model, env):
-    if model is not None:
-        handle_onnx_export(model)
-        handle_model_save(model, env)
-    if env is not None:
-        close_env(env)
+    handle_onnx_export(model)
+    handle_model_save(model, env)
+    close_env(env)
 
 
 path_checkpoint = os.path.join(args.experiment_dir, args.experiment_name + "_checkpoints")
-abs_path_checkpoint = os.path.abspath(path_checkpoint)
-
-if args.save_checkpoint_frequency is not None and os.path.isdir(path_checkpoint):
-    print(f"Warning: Checkpoint directory {abs_path_checkpoint} exists and will be used.")
+path_best_model = os.path.join(args.experiment_dir, args.experiment_name + "_best_model")
 
 if args.inference and args.resume_model_path is None:
     raise parser.error("Using --inference requires --resume_model_path to be set.")
@@ -231,7 +303,6 @@ else:
 
 
 def linear_schedule_with_floor(initial_value: float, min_fraction: float = 0.1) -> Callable[[float], float]:
-    """Decays to a minimum fraction (e.g. 10%) instead of 0.0 to prevent freeze."""
     def func(progress_remaining: float) -> float:
         return initial_value * (min_fraction + (1.0 - min_fraction) * progress_remaining)
     return func
@@ -240,12 +311,10 @@ def linear_schedule_with_floor(initial_value: float, min_fraction: float = 0.1) 
 use_linear_lr = not args.no_linear_lr_schedule
 learning_rate = linear_schedule_with_floor(args.learning_rate, min_fraction=0.1) if use_linear_lr else args.learning_rate
 
-# Multi-Agent Coordination Network Architecture (Expanded for Swarm Policy)
 policy_kwargs = dict(
     net_arch=dict(pi=[512, 512], vf=[512, 512])
 )
 
-# Guard against batch_size > total_buffer_size
 total_buffer_size = args.n_steps * env.num_envs
 effective_batch_size = min(args.batch_size, total_buffer_size)
 
@@ -281,19 +350,41 @@ try:
             action, _state = model.predict(obs, deterministic=True)
             obs, reward, done, info = env.step(action)
     else:
-        learn_arguments = dict(total_timesteps=args.timesteps, tb_log_name=args.experiment_name)
-        if args.save_checkpoint_frequency:
-            print(f"Checkpoint saving enabled. Checkpoints will be saved to: {abs_path_checkpoint}")
-            checkpoint_callback = CheckpointCallback(
-                save_freq=max(1, args.save_checkpoint_frequency // env.num_envs),
-                save_path=path_checkpoint,
-                name_prefix=args.experiment_name,
-            )
-            learn_arguments["callback"] = checkpoint_callback
+        callbacks = []
 
-        model.learn(**learn_arguments)
+        # 1. Periodic Checkpoint Callback
+        if args.save_checkpoint_frequency:
+            checkpoint_freq = max(1, args.save_checkpoint_frequency // env.num_envs)
+            print(f"Checkpoints will be saved every {args.save_checkpoint_frequency:,} steps to: {os.path.abspath(path_checkpoint)}")
+            callbacks.append(
+                CheckpointCallback(
+                    save_freq=checkpoint_freq,
+                    save_path=path_checkpoint,
+                    name_prefix=args.experiment_name,
+                )
+            )
+
+        # 2. Real-time Passive Best Model Saver
+        check_freq = max(1, args.best_model_check_freq // env.num_envs)
+        print(f"Best model tracking enabled after {args.best_model_start_step:,} steps -> saving to: {os.path.abspath(path_best_model)}")
+        callbacks.append(
+            RollingBestModelCallback(
+                check_freq_steps=check_freq,
+                save_path=path_best_model,
+                start_step=args.best_model_start_step,
+                min_episodes=10,
+                verbose=1,
+            )
+        )
+
+        callback_list = CallbackList(callbacks)
+        model.learn(
+            total_timesteps=args.timesteps,
+            tb_log_name=args.experiment_name,
+            callback=callback_list,
+        )
 
 except (KeyboardInterrupt, ConnectionError, ConnectionResetError) as e:
-    print(f"\nTraining interrupted: {e}. Executing cleanup/save...")
+    print(f"\nTraining interrupted ({type(e).__name__}). Executing cleanup/save...")
 finally:
     cleanup(model, env)
