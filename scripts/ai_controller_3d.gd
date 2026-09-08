@@ -11,34 +11,36 @@ var drone: Node3D = null
 var navigator: Node3D = null
 
 @export_group("Safety Enforcement")
-## When FALSE: The drone is allowed to fly into hazards and crash to learn negative penalties.
-## When TRUE: Hazardous actions are blocked before execution.
 @export var enforce_blocked_cells: bool = false
 @export var enable_action_masking: bool = false
 
 @export_group("Observation Dimensions")
 @export var max_tracked_frontiers: int = 3
 @export var max_tracked_nfz: int = 3
-@export var max_tracked_obstacles: int = 3
+@export var max_tracked_obstacles: int = 4
 @export var max_tracked_teammates: int = 3
 
 @export var max_velocity_reference: float = 5.0
 @export var max_distance_reference: float = 30.0
+@export var prediction_horizon_seconds: float = 2.0
 
 @export_group("Rewards & Penalties")
 @export var completion_bonus: float = 50.0
 @export var nfz_violation_penalty: float = 15.0
-@export var obstacle_collision_penalty: float = 20.0
+@export var obstacle_collision_penalty: float = 200.0
 @export var teammate_collision_penalty: float = 20.0
 @export var battery_depletion_penalty: float = 15.0
-@export var voxel_reward_weight: float = 0.1
-@export var time_step_penalty: float = 0.01
+@export var voxel_reward_weight: float = 0.2
+@export var time_step_penalty: float = 0.05
 @export var invalid_move_penalty: float = 1.0
+@export var revisit_penalty: float = 0.15
 
-@export_group("Potential Shaping")
-@export var frontier_shaping_weight: float = 1.0
-@export var obstacle_shaping_weight: float = 0.5
-@export var obstacle_danger_radius: float = 5.0
+@export_group("Dynamic Obstacle Avoidance Shaping")
+@export var obstacle_danger_radius: float = 6.0
+@export var obstacle_proximity_penalty_weight: float = 0.35
+@export var obstacle_closing_penalty_weight: float = 0.25
+@export var obstacle_shaping_weight: float = 0.3
+@export var frontier_shaping_weight: float = 0.5
 
 var cached_centroids: Array = []
 var _cached_nfz_nodes: Array = []
@@ -57,7 +59,12 @@ var _prev_frontier_dist: float = -1.0
 var _prev_nearest_obstacle_dist: float = -1.0
 var _current_frontier_dist: float = -1.0
 var _current_nearest_obstacle_dist: float = -1.0
+var _current_nearest_closing_speed: float = 0.0
 var _invalid_move_penalized := false
+
+# Loop-breaking history ring buffer
+var recent_positions: Array[Vector3i] = []
+const MAX_RECENT_POSITIONS: int = 8
 
 const DIRECTIONS = [
 	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
@@ -107,12 +114,10 @@ func _physics_process(_delta: float) -> void:
 				swarm_controller.trigger_swarm_failure("NFZ Violation (" + drone.name + ")", actions_taken)
 			return
 
-		_check_imminent_obstacle_danger(drone_pos)
+		if enforce_blocked_cells:
+			_check_imminent_obstacle_danger(drone_pos)
 
 func _check_imminent_obstacle_danger(_drone_pos: Vector3) -> void:
-	if not enforce_blocked_cells:
-		return
-
 	if not is_instance_valid(grid_manager) or not grid_manager.has_method("is_straight_path_safe"):
 		return
 	if not is_instance_valid(navigator) or not navigator.has_target:
@@ -157,7 +162,8 @@ func _get_current_grid_pos() -> Vector3i:
 # =====================================================
 
 func get_obs() -> Dictionary:
-	var total_obs_size = 8 + (max_tracked_frontiers * 3) + (max_tracked_nfz * 3) + (max_tracked_obstacles * 6) + (max_tracked_teammates * 6) + 6
+	# 8 base + (frontiers*3) + (nfz*3) + (obstacles*8) + (teammates*8) + 6 (static clearance) + 6 (dynamic clearance) + 6 (visited)
+	var total_obs_size = 8 + (max_tracked_frontiers * 3) + (max_tracked_nfz * 3) + (max_tracked_obstacles * 8) + (max_tracked_teammates * 8) + 6 + 6 + 6
 
 	if not is_instance_valid(drone) or not is_instance_valid(grid_manager):
 		var empty_obs: Array = []
@@ -167,7 +173,7 @@ func get_obs() -> Dictionary:
 		if enable_action_masking:
 			var empty_mask: Array[float] = []
 			empty_mask.resize(DIRECTIONS.size())
-			empty_mask.fill(0.0)
+			empty_mask.fill(1.0)
 			return_dict["action_mask"] = empty_mask
 		return return_dict
 
@@ -228,25 +234,45 @@ func get_obs() -> Dictionary:
 		else:
 			obs.append_array([1.0, 1.0, 1.0])
 
-	# 3. Obstacles
+	# 3. Dynamic Obstacles (Tracking position, velocity, closing speed & Closest Point of Approach)
 	var raw_obstacles = get_tree().get_nodes_in_group("obstacles") if get_tree() else []
 	var obstacles = raw_obstacles.filter(func(n): return is_instance_valid(n) and not n.is_queued_for_deletion())
 	obstacles.sort_custom(func(a, b): return pos.distance_squared_to(a.global_position) < pos.distance_squared_to(b.global_position))
 
 	var nearest_obstacle_dist: float = INF
+	var nearest_closing_speed: float = 0.0
+
 	for i in range(max_tracked_obstacles):
 		if i < obstacles.size():
 			var obs_node = obstacles[i] as Node3D
-			var rel_pos = (obs_node.global_position - pos) / max_distance_reference
-			if i == 0: nearest_obstacle_dist = (obs_node.global_position - pos).length()
+			var delta_pos = obs_node.global_position - pos
+			var dist = delta_pos.length()
 			var obs_vel = obs_node.linear_velocity if obs_node is RigidBody3D else (obs_node.velocity if "velocity" in obs_node else Vector3.ZERO)
-			var rel_vel = (obs_vel - vel) / max_velocity_reference
+			var rel_vel = obs_vel - vel
+
+			# Closing rate: positive if approaching each other, negative if departing
+			var closing_speed = -(delta_pos.dot(rel_vel)) / maxf(dist, 0.001)
+			var norm_closing_speed = clampf(closing_speed / (max_velocity_reference * 2.0), -1.0, 1.0)
+
+			# Predicted Closest Point of Approach (CPA) distance within prediction horizon
+			var min_predicted_dist = _calculate_cpa_distance(delta_pos, rel_vel, prediction_horizon_seconds)
+			var norm_min_dist = clampf(min_predicted_dist / max_distance_reference, 0.0, 1.0)
+
+			if i == 0:
+				nearest_obstacle_dist = dist
+				nearest_closing_speed = closing_speed
+
+			var rel_pos = delta_pos / max_distance_reference
+			var norm_rel_vel = rel_vel / max_velocity_reference
+
 			obs.append_array([
 				clampf(rel_pos.x, -1.0, 1.0), clampf(rel_pos.y, -1.0, 1.0), clampf(rel_pos.z, -1.0, 1.0),
-				clampf(rel_vel.x, -1.0, 1.0), clampf(rel_vel.y, -1.0, 1.0), clampf(rel_vel.z, -1.0, 1.0)
+				clampf(norm_rel_vel.x, -1.0, 1.0), clampf(norm_rel_vel.y, -1.0, 1.0), clampf(norm_rel_vel.z, -1.0, 1.0),
+				norm_closing_speed,
+				norm_min_dist
 			])
 		else:
-			obs.append_array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+			obs.append_array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
 	# 4. Teammates
 	var raw_drones = get_tree().get_nodes_in_group("drones") if get_tree() else []
@@ -256,17 +282,29 @@ func get_obs() -> Dictionary:
 	for i in range(max_tracked_teammates):
 		if i < other_drones.size():
 			var team = other_drones[i] as Node3D
-			var rel_pos = (team.global_position - pos) / max_distance_reference
+			var delta_pos = team.global_position - pos
+			var dist = delta_pos.length()
 			var team_vel = team.linear_velocity if team is RigidBody3D else (team.velocity if "velocity" in team else Vector3.ZERO)
-			var rel_vel = (team_vel - vel) / max_velocity_reference
+			var rel_vel = team_vel - vel
+
+			var closing_speed = -(delta_pos.dot(rel_vel)) / maxf(dist, 0.001)
+			var norm_closing_speed = clampf(closing_speed / (max_velocity_reference * 2.0), -1.0, 1.0)
+			var min_predicted_dist = _calculate_cpa_distance(delta_pos, rel_vel, prediction_horizon_seconds)
+			var norm_min_dist = clampf(min_predicted_dist / max_distance_reference, 0.0, 1.0)
+
+			var rel_pos = delta_pos / max_distance_reference
+			var norm_rel_vel = rel_vel / max_velocity_reference
+
 			obs.append_array([
 				clampf(rel_pos.x, -1.0, 1.0), clampf(rel_pos.y, -1.0, 1.0), clampf(rel_pos.z, -1.0, 1.0),
-				clampf(rel_vel.x, -1.0, 1.0), clampf(rel_vel.y, -1.0, 1.0), clampf(rel_vel.z, -1.0, 1.0)
+				clampf(norm_rel_vel.x, -1.0, 1.0), clampf(norm_rel_vel.y, -1.0, 1.0), clampf(norm_rel_vel.z, -1.0, 1.0),
+				norm_closing_speed,
+				norm_min_dist
 			])
 		else:
-			obs.append_array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+			obs.append_array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
-	# 5. Clearance
+	# 5. Static Clearance (6 directions) & Action Masking
 	var current_grid_pos = _get_current_grid_pos()
 	var action_mask: Array[float] = []
 
@@ -281,8 +319,25 @@ func get_obs() -> Dictionary:
 		obs.append(-1.0 if is_hazard else 1.0)
 		action_mask.append(0.0 if is_hazard else 1.0)
 
+	# 6. Dynamic Clearance Per Direction (Predicts collision along action vectors against moving obstacles)
+	for dir_idx in range(DIRECTIONS.size()):
+		var dir_vec = Vector3(DIRECTIONS[dir_idx]).normalized()
+		var candidate_target_world = pos + dir_vec * (grid_manager.cell_size if "cell_size" in grid_manager else 1.0)
+		var dynamic_hazard_score = _evaluate_dynamic_action_hazard(pos, candidate_target_world, obstacles)
+		obs.append(dynamic_hazard_score) # -1.0 (dangerous trajectory) to 1.0 (safe trajectory)
+
+	# 7. Local Visited state for each of the 6 directions
+	for dir_idx in range(DIRECTIONS.size()):
+		var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, dir_idx) if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
+		var is_visited: bool = false
+		if "visited_cells" in grid_manager and grid_manager.visited_cells != null:
+			is_visited = grid_manager.visited_cells.has(target_coord)
+		obs.append(-1.0 if is_visited else 1.0)
+
+	# Update distance states for potential shaping
 	if is_instance_valid(navigator) and not navigator.has_target:
 		_current_nearest_obstacle_dist = nearest_obstacle_dist if nearest_obstacle_dist != INF else max_distance_reference
+		_current_nearest_closing_speed = nearest_closing_speed
 		if _prev_nearest_obstacle_dist < 0.0:
 			_prev_nearest_obstacle_dist = _current_nearest_obstacle_dist
 		if centroids.size() > 0:
@@ -294,6 +349,44 @@ func get_obs() -> Dictionary:
 	if enable_action_masking:
 		result["action_mask"] = action_mask
 	return result
+
+# =====================================================
+# DYNAMIC TRAJECTORY PREDICTION HELPERS
+# =====================================================
+
+func _calculate_cpa_distance(delta_pos: Vector3, rel_vel: Vector3, horizon: float) -> float:
+	var v_sq = rel_vel.length_squared()
+	if v_sq < 0.001:
+		return delta_pos.length()
+
+	var t_cpa = -delta_pos.dot(rel_vel) / v_sq
+	var clamped_t = clampf(t_cpa, 0.0, horizon)
+	return (delta_pos + rel_vel * clamped_t).length()
+
+func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, obstacles: Array) -> float:
+	var min_clearance := 999.0
+	var action_dir = (drone_end - drone_start)
+
+	for obs_node in obstacles:
+		if not is_instance_valid(obs_node):
+			continue
+		var obs_pos = obs_node.global_position
+		var obs_vel = obs_node.linear_velocity if obs_node is RigidBody3D else (obs_node.velocity if "velocity" in obs_node else Vector3.ZERO)
+
+		# Check time steps along the projected path
+		for step in range(1, 4):
+			var t = (float(step) / 3.0) * (prediction_horizon_seconds * 0.5)
+			var proj_drone = drone_start + action_dir * (float(step) / 3.0)
+			var proj_obs = obs_pos + obs_vel * t
+			var dist = proj_drone.distance_to(proj_obs)
+			if dist < min_clearance:
+				min_clearance = dist
+
+	if min_clearance < (obstacle_danger_radius * 0.5):
+		return -1.0
+	elif min_clearance < obstacle_danger_radius:
+		return clampf((min_clearance - (obstacle_danger_radius * 0.5)) / (obstacle_danger_radius * 0.5), -1.0, 1.0)
+	return 1.0
 
 # =====================================================
 # REWARD & TERMINATION
@@ -331,20 +424,45 @@ func get_reward() -> float:
 	if is_instance_valid(navigator) and navigator.has_target:
 		return 0.0
 
+	var current_cell = _get_current_grid_pos()
+
+	# 1. Revisit / Loop penalty
+	var revisit_penalty_total := 0.0
+	if recent_positions.has(current_cell):
+		var count = recent_positions.count(current_cell)
+		revisit_penalty_total = revisit_penalty * count
+
+	recent_positions.append(current_cell)
+	if recent_positions.size() > MAX_RECENT_POSITIONS:
+		recent_positions.pop_front()
+
 	var coverage = grid_manager.get_coverage_percentage() if grid_manager.has_method("get_coverage_percentage") else 0.0
 	var current_voxels = grid_manager.visited_cells.size() if "visited_cells" in grid_manager else 0
 	var new_voxels = max(0, current_voxels - previous_discovered_voxels)
 
-	reward = float(new_voxels) * voxel_reward_weight
-	reward -= time_step_penalty
+	reward = (float(new_voxels) * voxel_reward_weight) - time_step_penalty - revisit_penalty_total
 
+	# 2. Frontier Distance Potential Shaping
 	if _prev_frontier_dist >= 0.0 and _current_frontier_dist >= 0.0:
-		reward += (_prev_frontier_dist - _current_frontier_dist) * frontier_shaping_weight
+		var delta = clampf(_prev_frontier_dist - _current_frontier_dist, -1.0, 1.0)
+		reward += delta * frontier_shaping_weight
 	_prev_frontier_dist = _current_frontier_dist
 
+	# 3. Dynamic Obstacle Proximity & Closing-Speed Penalties
+	if _current_nearest_obstacle_dist < obstacle_danger_radius and _current_nearest_obstacle_dist >= 0.0:
+		# Quadratic proximity danger penalty: increases sharply as obstacle gets closer
+		var norm_danger = 1.0 - (_current_nearest_obstacle_dist / obstacle_danger_radius)
+		reward -= pow(norm_danger, 2.0) * obstacle_proximity_penalty_weight
+
+		# Closing penalty: penalizes moving head-on or staying in collision course with moving obstacles
+		if _current_nearest_closing_speed > 0.0:
+			var closing_factor = clampf(_current_nearest_closing_speed / max_velocity_reference, 0.0, 1.5)
+			reward -= norm_danger * closing_factor * obstacle_closing_penalty_weight
+
+	# 4. Obstacle Repulsion Progress Shaping
 	if _prev_nearest_obstacle_dist >= 0.0 and _current_nearest_obstacle_dist >= 0.0:
 		if _current_nearest_obstacle_dist < obstacle_danger_radius or _prev_nearest_obstacle_dist < obstacle_danger_radius:
-			var obstacle_progress = _current_nearest_obstacle_dist - _prev_nearest_obstacle_dist
+			var obstacle_progress = clampf(_current_nearest_obstacle_dist - _prev_nearest_obstacle_dist, -1.0, 1.0)
 			reward += obstacle_progress * obstacle_shaping_weight
 	_prev_nearest_obstacle_dist = _current_nearest_obstacle_dist
 
@@ -447,6 +565,8 @@ func reset() -> void:
 	_current_frontier_dist = -1.0
 	_prev_nearest_obstacle_dist = -1.0
 	_current_nearest_obstacle_dist = -1.0
+	_current_nearest_closing_speed = 0.0
+	recent_positions.clear()
 
 	if is_instance_valid(swarm_controller) and swarm_controller.has_method("reset_environment"):
 		swarm_controller.reset_environment()

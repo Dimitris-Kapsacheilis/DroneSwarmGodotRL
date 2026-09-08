@@ -8,8 +8,8 @@ extends RigidBody3D
 @export var drone_id: int = -1
 
 # Battery Configuration
-@export var max_battery: float = 1200.0 # Time in seconds until the battery depletes (e.g., 20 minutes)
-var current_battery: float = 1200.0
+@export var max_battery: float = 120.0 # Time in seconds until the battery depletes (e.g., 20 minutes)
+var current_battery: float = 120.0
 
 signal collided(collider: Node)
 var target_waypoint: Vector3 = Vector3.INF

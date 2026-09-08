@@ -1,5 +1,5 @@
 import argparse
-import os
+import datetime
 import pathlib
 from typing import Callable
 
@@ -17,8 +17,10 @@ from godot_rl.core.utils import can_import
 from godot_rl.wrappers.onnx.stable_baselines_export import export_model_as_onnx
 from godot_rl.wrappers.stable_baselines_wrapper import StableBaselinesGodotEnv
 
+
 if can_import("ray"):
     print("WARNING, stable baselines and ray[rllib] are not compatible")
+
 
 parser = argparse.ArgumentParser(allow_abbrev=False)
 parser.add_argument(
@@ -31,7 +33,7 @@ parser.add_argument(
     "--experiment_dir",
     default="./logs",
     type=str,
-    help="Directory to store tensorboard logs and checkpoints",
+    help="Base directory to store run logs, models, and checkpoints",
 )
 parser.add_argument(
     "--experiment_name",
@@ -58,18 +60,17 @@ parser.add_argument(
     type=int,
     help="Save checkpoints every N environment steps",
 )
-# --- BEST MODEL SAVING ARGUMENTS ---
 parser.add_argument(
     "--best_model_start_step",
-    default=50_000,
+    default=0,
     type=int,
-    help="Step count after which best model tracking and saving starts",
+    help="Step count after which best model tracking starts",
 )
 parser.add_argument(
     "--best_model_check_freq",
-    default=5_000,
+    default=50_000,
     type=int,
-    help="Frequency (in steps) to check if the rolling mean reward reached a new high",
+    help="Frequency (in steps) to check for new best reward",
 )
 parser.add_argument(
     "--onnx_export_path",
@@ -102,10 +103,10 @@ parser.add_argument(
     default=False,
 )
 parser.add_argument(
-    "--speedup", 
-    default=8, 
-    type=int, 
-    help="Physics engine speedup factor (e.g. 4, 8, 16)"
+    "--speedup",
+    default=8,
+    type=int,
+    help="Physics engine speedup factor (e.g. 4, 8, 16)",
 )
 parser.add_argument(
     "--action_repeat",
@@ -119,81 +120,38 @@ parser.add_argument(
     type=int,
     help="Number of parallel Godot executable instances",
 )
-parser.add_argument("--learning_rate", default=3e-4, type=float, help="Initial learning rate")
-
-# --- HYPERPARAMETERS ---
-parser.add_argument(
-    "--n_steps",
-    default=1024,
-    type=int,
-    help="Number of steps per rollout",
-)
-parser.add_argument(
-    "--batch_size",
-    default=2048,
-    type=int,
-    help="Minibatch size for PPO updates",
-)
-parser.add_argument(
-    "--n_epochs",
-    default=5,
-    type=int,
-    help="Number of optimization epochs per rollout",
-)
-parser.add_argument(
-    "--ent_coef",
-    default=0.003,
-    type=float,
-    help="Entropy coefficient",
-)
-parser.add_argument(
-    "--clip_range",
-    default=0.2,
-    type=float,
-    help="PPO surrogate clipping range",
-)
-parser.add_argument(
-    "--gae_lambda",
-    default=0.98,
-    type=float,
-    help="GAE lambda",
-)
-parser.add_argument(
-    "--gamma",
-    default=0.998,
-    type=float,
-    help="Discount factor",
-)
+parser.add_argument("--learning_rate", default=1e-4, type=float, help="Initial learning rate")
+parser.add_argument("--n_steps", default=2048, type=int, help="Steps per rollout")
+parser.add_argument("--batch_size", default=2048, type=int, help="Minibatch size for PPO")
+parser.add_argument("--n_epochs", default=4, type=int, help="Optimization epochs per rollout")
+parser.add_argument("--ent_coef", default=0.015, type=float, help="Entropy coefficient")
+parser.add_argument("--clip_range", default=0.2, type=float, help="PPO clip range")
+parser.add_argument("--gae_lambda", default=0.95, type=float, help="GAE lambda")
+parser.add_argument("--gamma", default=0.99, type=float, help="Discount factor")
 
 args, extras = parser.parse_known_args()
 
 
 class RollingBestModelCallback(BaseCallback):
-    """
-    Tracks the rolling mean reward of completed training episodes in real-time.
-    Immediately saves best_model.zip and VecNormalize stats without stopping Godot.
-    """
     def __init__(
         self,
         check_freq_steps: int,
         save_path: str,
-        start_step: int = 50_000,
-        min_episodes: int = 10,
+        start_step: int = 0,
+        min_episodes: int = 5,
         verbose: int = 1,
     ):
         super().__init__(verbose)
         self.check_freq_steps = check_freq_steps
-        self.save_path = save_path
+        self.save_path = pathlib.Path(save_path).resolve()
         self.start_step = start_step
         self.min_episodes = min_episodes
         self.best_mean_reward = -np.inf
 
     def _init_callback(self) -> None:
-        if self.save_path is not None:
-            os.makedirs(self.save_path, exist_ok=True)
+        self.save_path.mkdir(parents=True, exist_ok=True)
 
     def _on_step(self) -> bool:
-        # Only start tracking after reaching start_step
         if self.num_timesteps < self.start_step:
             return True
 
@@ -204,43 +162,46 @@ class RollingBestModelCallback(BaseCallback):
                 mean_len = float(np.mean([ep_info["l"] for ep_info in ep_buffer]))
 
                 if mean_reward > self.best_mean_reward:
+                    self.best_mean_reward = mean_reward
+                    self.save_path.mkdir(parents=True, exist_ok=True)
+
+                    model_path = self.save_path / "best_model.zip"
+                    self.model.save(str(model_path))
+
+                    vec_norm = self.model.get_vec_normalize_env()
+                    if vec_norm is not None:
+                        norm_path = self.save_path / "best_model_vec_normalize.pkl"
+                        vec_norm.save(str(norm_path))
+
                     if self.verbose > 0:
                         print(
                             f"\n>>> [BestModel] Step {self.num_timesteps:,} (Buffer: {len(ep_buffer)} eps): "
-                            f"New best mean reward: {mean_reward:.2f} (prev: {self.best_mean_reward:.2f}, avg len: {mean_len:.1f}). Saving..."
+                            f"New best mean reward: {mean_reward:.2f} (avg len: {mean_len:.1f}). "
+                            f"Saved to: {model_path}"
                         )
-                    self.best_mean_reward = mean_reward
-
-                    # 1. Save model weights
-                    model_path = os.path.join(self.save_path, "best_model.zip")
-                    self.model.save(model_path)
-
-                    # 2. Save VecNormalize statistics
-                    vec_norm = self.model.get_vec_normalize_env()
-                    if vec_norm is not None:
-                        norm_path = os.path.join(self.save_path, "best_model_vec_normalize.pkl")
-                        vec_norm.save(norm_path)
-
         return True
 
 
 def handle_onnx_export(model):
     if args.onnx_export_path is not None and model is not None:
-        path_onnx = pathlib.Path(args.onnx_export_path).with_suffix(".onnx")
-        print(f"Exporting ONNX to: {os.path.abspath(path_onnx)}")
+        path_onnx = pathlib.Path(args.onnx_export_path).with_suffix(".onnx").resolve()
+        path_onnx.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Exporting ONNX to: {path_onnx}")
         export_model_as_onnx(model, str(path_onnx))
 
 
-def handle_model_save(model, env):
-    if args.save_model_path is not None and model is not None:
-        zip_save_path = pathlib.Path(args.save_model_path).with_suffix(".zip")
-        print(f"Saving model to: {os.path.abspath(zip_save_path)}")
-        model.save(zip_save_path)
-        
+def handle_model_save(model, run_dir):
+    save_path = pathlib.Path(args.save_model_path) if args.save_model_path else (run_dir / "final_model.zip")
+    save_path = save_path.with_suffix(".zip").resolve()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if model is not None:
+        print(f"Saving final model to: {save_path}")
+        model.save(str(save_path))
         vec_norm = model.get_vec_normalize_env() if hasattr(model, "get_vec_normalize_env") else None
         if vec_norm is not None:
-            norm_path = zip_save_path.parent / f"{zip_save_path.stem}_vec_normalize.pkl"
-            print(f"Saving VecNormalize stats to: {os.path.abspath(norm_path)}")
+            norm_path = save_path.parent / f"{save_path.stem}_vec_normalize.pkl"
+            print(f"Saving VecNormalize stats to: {norm_path}")
             vec_norm.save(str(norm_path))
 
 
@@ -253,19 +214,24 @@ def close_env(env):
             print(f"Exception while closing env: {e}")
 
 
-def cleanup(model, env):
+def cleanup(model, env, run_dir):
     handle_onnx_export(model)
-    handle_model_save(model, env)
+    handle_model_save(model, run_dir)
     close_env(env)
 
-
-path_checkpoint = os.path.join(args.experiment_dir, args.experiment_name + "_checkpoints")
-path_best_model = os.path.join(args.experiment_dir, args.experiment_name + "_best_model")
 
 if args.inference and args.resume_model_path is None:
     raise parser.error("Using --inference requires --resume_model_path to be set.")
 
-# 1. Initialize Base Godot Environment
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+run_name = f"{args.experiment_name}_{timestamp}"
+run_dir = (pathlib.Path(args.experiment_dir) / run_name).resolve()
+
+path_checkpoint = run_dir / "checkpoints"
+path_best_model = run_dir / "best_model"
+run_dir.mkdir(parents=True, exist_ok=True)
+print(f"Run output directory: {run_dir}")
+
 env = StableBaselinesGodotEnv(
     env_path=args.env_path,
     show_window=args.viz,
@@ -274,13 +240,11 @@ env = StableBaselinesGodotEnv(
     speedup=args.speedup,
     action_repeat=args.action_repeat,
 )
-
-# 2. Add Monitor & Normalization Wrappers
 env = VecMonitor(env)
 
 norm_path = None
 if args.resume_model_path:
-    resume_p = pathlib.Path(args.resume_model_path)
+    resume_p = pathlib.Path(args.resume_model_path).resolve()
     potential_norm = resume_p.parent / f"{resume_p.stem}_vec_normalize.pkl"
     if potential_norm.exists():
         norm_path = str(potential_norm)
@@ -295,7 +259,7 @@ else:
     env = VecNormalize(
         env,
         norm_obs=True,
-        norm_reward=True,
+        norm_reward=not args.inference,
         clip_obs=10.0,
         clip_reward=10.0,
         gamma=args.gamma,
@@ -315,8 +279,13 @@ policy_kwargs = dict(
     net_arch=dict(pi=[512, 512], vf=[512, 512])
 )
 
+# Ensure batch_size is a clean divisor of buffer size
 total_buffer_size = args.n_steps * env.num_envs
-effective_batch_size = min(args.batch_size, total_buffer_size)
+effective_batch_size = args.batch_size
+while total_buffer_size % effective_batch_size != 0 and effective_batch_size > 64:
+    effective_batch_size //= 2
+
+print(f"Total Rollout Buffer: {total_buffer_size} | Minibatch Size: {effective_batch_size}")
 
 model = None
 try:
@@ -336,13 +305,13 @@ try:
             max_grad_norm=0.5,
             policy_kwargs=policy_kwargs,
             normalize_advantage=True,
-            tensorboard_log=args.experiment_dir,
+            tensorboard_log=str(run_dir / "tb_logs"),
             verbose=2,
         )
     else:
-        path_zip = pathlib.Path(args.resume_model_path)
-        print(f"Loading model: {os.path.abspath(path_zip)}")
-        model = PPO.load(path_zip, env=env, tensorboard_log=args.experiment_dir)
+        path_zip = pathlib.Path(args.resume_model_path).resolve()
+        print(f"Loading model: {path_zip}")
+        model = PPO.load(str(path_zip), env=env, tensorboard_log=str(run_dir / "tb_logs"))
 
     if args.inference:
         obs = env.reset()
@@ -352,39 +321,34 @@ try:
     else:
         callbacks = []
 
-        # 1. Periodic Checkpoint Callback
         if args.save_checkpoint_frequency:
             checkpoint_freq = max(1, args.save_checkpoint_frequency // env.num_envs)
-            print(f"Checkpoints will be saved every {args.save_checkpoint_frequency:,} steps to: {os.path.abspath(path_checkpoint)}")
             callbacks.append(
                 CheckpointCallback(
                     save_freq=checkpoint_freq,
-                    save_path=path_checkpoint,
+                    save_path=str(path_checkpoint),
                     name_prefix=args.experiment_name,
                 )
             )
 
-        # 2. Real-time Passive Best Model Saver
         check_freq = max(1, args.best_model_check_freq // env.num_envs)
-        print(f"Best model tracking enabled after {args.best_model_start_step:,} steps -> saving to: {os.path.abspath(path_best_model)}")
         callbacks.append(
             RollingBestModelCallback(
                 check_freq_steps=check_freq,
-                save_path=path_best_model,
+                save_path=str(path_best_model),
                 start_step=args.best_model_start_step,
-                min_episodes=10,
+                min_episodes=5,
                 verbose=1,
             )
         )
 
-        callback_list = CallbackList(callbacks)
         model.learn(
             total_timesteps=args.timesteps,
-            tb_log_name=args.experiment_name,
-            callback=callback_list,
+            tb_log_name="run",
+            callback=CallbackList(callbacks),
         )
 
 except (KeyboardInterrupt, ConnectionError, ConnectionResetError) as e:
     print(f"\nTraining interrupted ({type(e).__name__}). Executing cleanup/save...")
 finally:
-    cleanup(model, env)
+    cleanup(model, env, run_dir)
