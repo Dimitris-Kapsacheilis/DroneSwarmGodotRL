@@ -33,6 +33,9 @@ func _ready() -> void:
 			
 	await get_tree().process_frame
 	setup_visualizers()
+	var hud_slider = get_tree().root.find_child("SpeedSlider", true, false)
+	if hud_slider is HSlider:
+		flight_speed = hud_slider.value
 
 func _physics_process(delta: float) -> void:
 	if not is_instance_valid(grid_manager) or not is_instance_valid(drone):

@@ -17,6 +17,7 @@ var current_leader: Drone = null
 var drones: Array[Drone] = []
 var _last_reset_frame: int = -1
 var swarm_failed: bool = false
+var last_failure_reason: String = ""
 
 var _drone_colors := [
 	Color(1.0, 0.2, 0.2),
@@ -44,21 +45,20 @@ func _ready() -> void:
 		drones.append(drone)
 		if drones.size() > 0:
 			current_leader = drones[0]
+			
 	var sync_node = get_tree().current_scene.get_node_or_null("Sync")
 	if is_instance_valid(sync_node) and "agents" in sync_node:
 		sync_node.agents = get_tree().get_nodes_in_group("AGENT")
 
 	reset_environment()
 
-# Inside swarm_controller.gd
-
 func trigger_swarm_failure(reason: String = "", agent_actions: int = -1) -> void:
 	if not swarm_failed:
+		last_failure_reason = reason
 		var coverage_val := 0.0
 		if is_instance_valid(grid_manager) and grid_manager.has_method("get_coverage_percentage"):
 			coverage_val = grid_manager.get_coverage_percentage()
 
-		# Compute total actions across all drones
 		var total_actions := 0
 		if agent_actions >= 0:
 			total_actions = agent_actions
@@ -69,7 +69,7 @@ func trigger_swarm_failure(reason: String = "", agent_actions: int = -1) -> void
 					if is_instance_valid(nav) and "actions_taken" in nav:
 						total_actions += nav.actions_taken
 
-		print("PID: " , OS.get_process_id() ," [SWARM TERMINATION] -> Reason: %s | Coverage: %.2f%% | Actions Taken: %d" % [reason, coverage_val, total_actions])
+		print("PID: ", OS.get_process_id(), " [SWARM TERMINATION] -> Reason: %s | Coverage: %.2f%% | Actions Taken: %d" % [reason, coverage_val, total_actions])
 		swarm_failed = true
 
 func reset_environment() -> void:
@@ -78,6 +78,7 @@ func reset_environment() -> void:
 		return
 	_last_reset_frame = current_frame
 	swarm_failed = false
+	last_failure_reason = ""
 
 	# 1. Reset NFZs
 	if not is_instance_valid(nfz_manager):

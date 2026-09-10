@@ -1,3 +1,4 @@
+class_name GridManager
 extends Node3D
 
 @export_group("Grid Dimensions")
@@ -8,175 +9,373 @@ extends Node3D
 
 @export_group("Boundary Visualization")
 @export var show_boundary_lines: bool = true
-@export var boundary_color: Color = Color(0.2, 0.8, 1.0, 0.8) # Cyan wireframe
+@export var boundary_color: Color = Color(0.2, 0.8, 1.0, 0.8)
 @export var boundary_line_width: float = 2.0
+@export_group("Trail Transparency & Buildup")
+## Starting alpha on first visit (0.02 = barely visible ghost trail)
+@export_range(0.005, 0.15, 0.005) var initial_trail_alpha: float = 0.001
 
-@export_group("Trail Visualization")
-@export var show_trails: bool = true:
-	set(value):
-		show_trails = value
-		if is_instance_valid(_trail_multimesh_instance):
-			_trail_multimesh_instance.visible = show_trails
-			if show_trails:
-				_refresh_trail_mesh()
-@export_range(0.05, 1.0, 0.05) var trail_alpha: float = 0.45
-@export_range(0.1, 1.0, 0.05) var trail_scale: float = 0.85 # Size ratio inside cell
+## SCALE THIS: Controls how fast transparency builds up per revisit.
+## Lower = takes many passes to become visible (e.g., 0.005 - 0.015)
+## Higher = gets solid faster (e.g., 0.05 - 0.1)
+@export_range(0.001, 0.1, 0.001) var trail_buildup_speed: float = 0.001
 
-# Cell State Dictionaries
-# visited_cells: Key: Vector3i, Value: Color (Color of the drone that visited it)
+## Maximum solidness cap
+@export_range(0.3, 1.0, 0.05) var max_trail_alpha: float = 1.0
+
+## Box mesh size inside the grid cell
+@export_range(0.1, 1.0, 0.05) var trail_scale: float = 0.90
+# Global cell sets
 var visited_cells: Dictionary = {}
 var obstacle_cells: Dictionary = {}
 var blocked_cells: Dictionary = {}
 
+# Per-drone tracking
+var drone_visited: Dictionary = {}         # Key: drone_id -> Dictionary[Vector3i, int (visit count)]
+var drone_last_center: Dictionary = {}     # Key: drone_id -> Vector3i
+var drone_colors: Dictionary = {}          # Key: drone_id -> Color
+var drone_multimeshes: Dictionary = {}     # Key: drone_id -> MultiMeshInstance3D
+var drone_visibility: Dictionary = {}      # Key: drone_id -> bool
+var drone_mesh_dirty: Dictionary = {}      # Key: drone_id -> bool
+
 var total_traversable_cells: int = 0
 var _total_grid_volume: int = 0
 var _boundary_mesh_instance: MeshInstance3D = null
-var _trail_multimesh_instance: MultiMeshInstance3D = null
 
 func _ready() -> void:
 	_total_grid_volume = grid_size.x * grid_size.y * grid_size.z
 	total_traversable_cells = _total_grid_volume
 
 	_create_boundary_lines()
-	_setup_trail_visualizer()
 	reset_grid()
 
 func _physics_process(_delta: float) -> void:
-	# MULTI-AGENT: Sweeps and marks coverage for EVERY active drone in the swarm with its color
 	var drones = get_tree().get_nodes_in_group("drones")
-	var new_visited_marked: bool = false
 	
 	for drone in drones:
 		if is_instance_valid(drone) and not drone.is_queued_for_deletion():
-			var drone_col: Color = drone.drone_color if "drone_color" in drone else Color.WHITE
-			if _mark_visited_around(drone.global_position, drone_col):
-				new_visited_marked = true
+			var d_id: int = drone.drone_id if "drone_id" in drone else drone.get_instance_id()
+			var d_col: Color = drone.drone_color if "drone_color" in drone else Color.WHITE
+			
+			_ensure_drone_registered(d_id, d_col)
+			_mark_drone_visited_around(d_id, drone.global_position)
 
-	if new_visited_marked and show_trails:
-		_refresh_trail_mesh()
+	# Update trails in real time for any drone currently visible
+	for d_id in drone_mesh_dirty:
+		if drone_mesh_dirty[d_id]:
+			if drone_visibility.get(d_id, true):
+				_refresh_drone_trail_mesh(d_id)
+				drone_mesh_dirty[d_id] = false
 
 # =====================================================
-# TRAIL VISUALIZATION (MULTIMESH)
+# PER-DRONE TRAIL VISUALIZATION & INTENSITY
 # =====================================================
 
-func _setup_trail_visualizer() -> void:
+func _ensure_drone_registered(d_id: int, d_color: Color) -> void:
+	if not drone_visited.has(d_id):
+		drone_visited[d_id] = {}
+		drone_last_center[d_id] = Vector3i(-9999, -9999, -9999)
+		drone_colors[d_id] = d_color
+		drone_visibility[d_id] = true
+		drone_mesh_dirty[d_id] = false
+		_create_drone_multimesh(d_id)
+
+func _create_drone_multimesh(d_id: int) -> void:
 	if DisplayServer.get_name() == "headless":
 		return
 
-	if is_instance_valid(_trail_multimesh_instance):
-		_trail_multimesh_instance.queue_free()
+	if drone_multimeshes.has(d_id) and is_instance_valid(drone_multimeshes[d_id]):
+		drone_multimeshes[d_id].queue_free()
 
-	_trail_multimesh_instance = MultiMeshInstance3D.new()
-	_trail_multimesh_instance.name = "DroneTrailVisualizer"
-	add_child(_trail_multimesh_instance)
+	var mmi = MultiMeshInstance3D.new()
+	mmi.name = "TrailMesh_Drone_%d" % d_id
+	add_child(mmi)
 
 	var mm = MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
 
+	# Slight scale offset per drone so overlapping cells layer nicely
+	var scale_offset = 1.0 - (float(abs(d_id) % 5) * 0.02)
 	var box_mesh = BoxMesh.new()
-	box_mesh.size = Vector3.ONE * (cell_size * trail_scale)
+	box_mesh.size = Vector3.ONE * (cell_size * trail_scale * scale_offset)
 
 	var mat = StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.vertex_color_use_as_albedo = true
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX # Shows true drone color cleanly
 	mat.no_depth_test = false
 	box_mesh.material = mat
 
 	mm.mesh = box_mesh
-	_trail_multimesh_instance.multimesh = mm
-	_trail_multimesh_instance.visible = show_trails
-
-func _refresh_trail_mesh() -> void:
-	if not show_trails or DisplayServer.get_name() == "headless" or _trail_multimesh_instance == null:
+	mmi.multimesh = mm
+	mmi.visible = drone_visibility.get(d_id, true)
+	drone_multimeshes[d_id] = mmi
+func _refresh_drone_trail_mesh(d_id: int) -> void:
+	if DisplayServer.get_name() == "headless" or not drone_multimeshes.has(d_id):
 		return
 
-	var mm = _trail_multimesh_instance.multimesh
-	if mm == null:
+	var mmi: MultiMeshInstance3D = drone_multimeshes[d_id]
+	if not is_instance_valid(mmi) or mmi.multimesh == null:
 		return
 
-	var count = visited_cells.size()
+	var cells_dict: Dictionary = drone_visited[d_id]
+	var count = cells_dict.size()
+	var mm = mmi.multimesh
+
 	if mm.instance_count != count:
 		mm.instance_count = count
 
+	var base_col: Color = drone_colors.get(d_id, Color.WHITE)
 	var idx = 0
-	for coord in visited_cells:
-		var color: Color = visited_cells[coord]
-		color.a = trail_alpha
+
+	for coord in cells_dict:
+		var visits: int = cells_dict[coord]
+		
+		# Starts at initial_trail_alpha and very slowly scales up with each revisit
+		var alpha: float = clampf(
+			initial_trail_alpha + float(visits - 1) * trail_buildup_speed,
+			initial_trail_alpha,
+			max_trail_alpha
+		)
+
+		var final_col = Color(base_col.r, base_col.g, base_col.b, alpha)
 
 		var cell_world_pos = grid_to_world(coord)
 		var trans = Transform3D(Basis(), cell_world_pos)
-		
+
 		mm.set_instance_transform(idx, trans)
-		mm.set_instance_color(idx, color)
+		mm.set_instance_color(idx, final_col)
 		idx += 1
 
+func set_drone_trail_visible(d_id: int, is_visible: bool) -> void:
+	drone_visibility[d_id] = is_visible
+	if drone_multimeshes.has(d_id) and is_instance_valid(drone_multimeshes[d_id]):
+		drone_multimeshes[d_id].visible = is_visible
+		# If made visible and has pending updates, refresh immediately
+		if is_visible and drone_mesh_dirty.get(d_id, false):
+			_refresh_drone_trail_mesh(d_id)
+			drone_mesh_dirty[d_id] = false
+
+func set_all_trails_visible(is_visible: bool) -> void:
+	for d_id in drone_multimeshes:
+		drone_visibility[d_id] = is_visible
+		if is_instance_valid(drone_multimeshes[d_id]):
+			drone_multimeshes[d_id].visible = is_visible
+			if is_visible and drone_mesh_dirty.get(d_id, false):
+				_refresh_drone_trail_mesh(d_id)
+				drone_mesh_dirty[d_id] = false
+
 # =====================================================
-# BOUNDARY LINE RENDERING (WIREFRAME CUBE)
+# COVERAGE & VISITATION
 # =====================================================
-func _create_boundary_lines() -> void:
-	if not show_boundary_lines or DisplayServer.get_name() == "headless":
+
+func _mark_drone_visited_around(d_id: int, world_pos: Vector3) -> void:
+	var center_coord = world_to_grid(world_pos)
+	
+	if drone_last_center.get(d_id, Vector3i(-9999,-9999,-9999)) == center_coord:
 		return
+	drone_last_center[d_id] = center_coord
 
-	if is_instance_valid(_boundary_mesh_instance):
-		_boundary_mesh_instance.queue_free()
+	var radius_in_cells = int(ceil(sensor_radius / cell_size))
+	var changed: bool = false
+	var drone_cells: Dictionary = drone_visited[d_id]
 
-	_boundary_mesh_instance = MeshInstance3D.new()
-	_boundary_mesh_instance.name = "GridBoundaryVisual"
-	add_child(_boundary_mesh_instance)
+	for dx in range(-radius_in_cells, radius_in_cells + 1):
+		for dy in range(-radius_in_cells, radius_in_cells + 1):
+			for dz in range(-radius_in_cells, radius_in_cells + 1):
+				var coord = center_coord + Vector3i(dx, dy, dz)
+				if is_within_bounds(coord):
+					var cell_world = grid_to_world(coord)
+					if world_pos.distance_squared_to(cell_world) <= sensor_radius * sensor_radius:
+						if not obstacle_cells.has(coord) and not blocked_cells.has(coord):
+							visited_cells[coord] = true
+							var old_visits = drone_cells.get(coord, 0)
+							drone_cells[coord] = old_visits + 1
+							changed = true
 
-	_boundary_mesh_instance.global_position = global_position
+	if changed:
+		drone_mesh_dirty[d_id] = true
 
-	var mat = StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = boundary_color
-	mat.no_depth_test = true
-	mat.render_priority = 2
+func get_coverage_percentage() -> float:
+	if total_traversable_cells <= 0:
+		return 0.0
+	return (float(visited_cells.size()) / float(total_traversable_cells)) * 100.0
 
-	var imm_mesh = ImmediateMesh.new()
-	imm_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+func reset_grid() -> void:
+	visited_cells.clear()
+	obstacle_cells.clear()
+	blocked_cells.clear()
 
-	var w = float(grid_size.x) * cell_size
-	var h = float(grid_size.y) * cell_size
-	var d = float(grid_size.z) * cell_size
+	for d_id in drone_visited:
+		drone_visited[d_id].clear()
+		drone_last_center[d_id] = Vector3i(-9999, -9999, -9999)
+		if drone_multimeshes.has(d_id) and is_instance_valid(drone_multimeshes[d_id]):
+			drone_multimeshes[d_id].multimesh.instance_count = 0
 
-	var v0 = Vector3(0, 0, 0); var v1 = Vector3(w, 0, 0)
-	var v2 = Vector3(w, 0, d); var v3 = Vector3(0, 0, d)
-	var v4 = Vector3(0, h, 0); var v5 = Vector3(w, h, 0)
-	var v6 = Vector3(w, h, d); var v7 = Vector3(0, h, d)
+	var root = get_tree().current_scene if get_tree() else null
+	if root:
+		var nfz_manager = root.get_node_or_null("NoFlyZoneManager")
+		if is_instance_valid(nfz_manager) and nfz_manager.has_method("populate_blocked_cells"):
+			nfz_manager.populate_blocked_cells(self)
 
-	# Bottom square
-	imm_mesh.surface_add_vertex(v0); imm_mesh.surface_add_vertex(v1)
-	imm_mesh.surface_add_vertex(v1); imm_mesh.surface_add_vertex(v2)
-	imm_mesh.surface_add_vertex(v2); imm_mesh.surface_add_vertex(v3)
-	imm_mesh.surface_add_vertex(v3); imm_mesh.surface_add_vertex(v0)
+	_update_total_traversable_count()
 
-	# Top square
-	imm_mesh.surface_add_vertex(v4); imm_mesh.surface_add_vertex(v5)
-	imm_mesh.surface_add_vertex(v5); imm_mesh.surface_add_vertex(v6)
-	imm_mesh.surface_add_vertex(v6); imm_mesh.surface_add_vertex(v7)
-	imm_mesh.surface_add_vertex(v7); imm_mesh.surface_add_vertex(v4)
-
-	# Vertical pillars
-	imm_mesh.surface_add_vertex(v0); imm_mesh.surface_add_vertex(v4)
-	imm_mesh.surface_add_vertex(v1); imm_mesh.surface_add_vertex(v5)
-	imm_mesh.surface_add_vertex(v2); imm_mesh.surface_add_vertex(v6)
-	imm_mesh.surface_add_vertex(v3); imm_mesh.surface_add_vertex(v7)
-
-	imm_mesh.surface_end()
-
-	_boundary_mesh_instance.mesh = imm_mesh
-	_boundary_mesh_instance.material_override = mat
+func _update_total_traversable_count() -> void:
+	var blocked_count = blocked_cells.size() + obstacle_cells.size()
+	total_traversable_cells = max(1, _total_grid_volume - blocked_count)
 
 # =====================================================
-# PATHFINDING (3D A* ALGORITHM)
+# OBSTACLE REGISTRATION
+# =====================================================
+
+func register_obstacle(target) -> void:
+	if target == null: return
+	if target is Node3D:
+		var pos = target.global_position
+		if "radius" in target:
+			_register_sphere_obstacle(pos, float(target.radius))
+		elif "size" in target and target.size is Vector3:
+			_register_box_obstacle(pos, target.size)
+		elif target.has_node("CollisionShape3D"):
+			var col_shape = target.get_node("CollisionShape3D")
+			if is_instance_valid(col_shape) and col_shape.shape is BoxShape3D:
+				_register_box_obstacle(pos, col_shape.shape.size)
+			elif is_instance_valid(col_shape) and col_shape.shape is SphereShape3D:
+				_register_sphere_obstacle(pos, col_shape.shape.radius)
+			else:
+				_mark_single_cell_obstacle(world_to_grid(pos))
+		else:
+			_mark_single_cell_obstacle(world_to_grid(pos))
+	elif target is Vector3:
+		_mark_single_cell_obstacle(world_to_grid(target))
+	elif target is Vector3i:
+		_mark_single_cell_obstacle(target)
+	elif target is Array:
+		for item in target:
+			register_obstacle(item)
+
+	_update_total_traversable_count()
+
+func unregister_obstacle(target) -> void:
+	if target == null: return
+	if target is Node3D:
+		obstacle_cells.erase(world_to_grid(target.global_position))
+	elif target is Vector3:
+		obstacle_cells.erase(world_to_grid(target))
+	elif target is Vector3i:
+		obstacle_cells.erase(target)
+
+	_update_total_traversable_count()
+
+func _mark_single_cell_obstacle(coord: Vector3i) -> void:
+	if is_within_bounds(coord):
+		obstacle_cells[coord] = true
+		visited_cells.erase(coord)
+		for d_id in drone_visited:
+			drone_visited[d_id].erase(coord)
+
+func _register_sphere_obstacle(world_pos: Vector3, radius: float) -> void:
+	var center = world_to_grid(world_pos)
+	var r_cells = int(ceil(radius / cell_size))
+	for dx in range(-r_cells, r_cells + 1):
+		for dy in range(-r_cells, r_cells + 1):
+			for dz in range(-r_cells, r_cells + 1):
+				var coord = center + Vector3i(dx, dy, dz)
+				if is_within_bounds(coord):
+					var cell_pos = grid_to_world(coord)
+					if world_pos.distance_squared_to(cell_pos) <= radius * radius:
+						_mark_single_cell_obstacle(coord)
+
+func _register_box_obstacle(world_pos: Vector3, box_size: Vector3) -> void:
+	var half = box_size * 0.5
+	var min_coord = world_to_grid(world_pos - half)
+	var max_coord = world_to_grid(world_pos + half)
+	for x in range(min_coord.x, max_coord.x + 1):
+		for y in range(min_coord.y, max_coord.y + 1):
+			for z in range(min_coord.z, max_coord.z + 1):
+				_mark_single_cell_obstacle(Vector3i(x, y, z))
+
+func is_cell_strictly_free(coord: Vector3i) -> bool:
+	if not is_within_bounds(coord): return false
+	return not obstacle_cells.has(coord) and not blocked_cells.has(coord)
+
+# =====================================================
+# PATH & STEP SAFETY CHECKS
+# =====================================================
+
+func is_straight_path_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
+	if not is_within_bounds(to_coord):
+		return false
+	return not is_straight_path_hazardous(from_coord, to_coord)
+
+func is_straight_path_hazardous(from_coord: Vector3i, to_coord: Vector3i) -> bool:
+	var steps = int(max(abs(to_coord.x - from_coord.x), max(abs(to_coord.y - from_coord.y), abs(to_coord.z - from_coord.z))))
+	if steps == 0:
+		return not is_cell_strictly_free(from_coord)
+
+	for s in range(steps + 1):
+		var t = float(s) / float(steps)
+		var check_coord = Vector3i(
+			int(round(lerp(float(from_coord.x), float(to_coord.x), t))),
+			int(round(lerp(float(from_coord.y), float(to_coord.y), t))),
+			int(round(lerp(float(from_coord.z), float(to_coord.z), t)))
+		)
+		if not is_cell_strictly_free(check_coord):
+			return true
+	return false
+
+func get_adjacent_octree_center(current_coord: Vector3i, direction_idx: int) -> Vector3i:
+	const DIRS = [
+		Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+		Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+		Vector3i(0, 0, 1), Vector3i(0, 0, -1)
+	]
+	if direction_idx < 0 or direction_idx >= DIRS.size():
+		return current_coord
+
+	var target = current_coord + DIRS[direction_idx] * octree_step_size
+	target.x = clampi(target.x, 0, grid_size.x - 1)
+	target.y = clampi(target.y, 0, grid_size.y - 1)
+	target.z = clampi(target.z, 0, grid_size.z - 1)
+	return target
+
+func get_frontier_centroids(max_count: int) -> Array[Vector3]:
+	var frontiers: Array[Vector3] = []
+	if visited_cells.is_empty():
+		return frontiers
+
+	var step = 4
+	for x in range(0, grid_size.x, step):
+		for y in range(0, grid_size.y, step):
+			for z in range(0, grid_size.z, step):
+				var coord = Vector3i(x, y, z)
+				if not visited_cells.has(coord) and is_cell_strictly_free(coord):
+					if _has_visited_neighbor(coord):
+						frontiers.append(grid_to_world(coord))
+						if frontiers.size() >= max_count:
+							return frontiers
+	return frontiers
+
+func _has_visited_neighbor(coord: Vector3i) -> bool:
+	const NEIGHBORS = [
+		Vector3i(1,0,0), Vector3i(-1,0,0),
+		Vector3i(0,1,0), Vector3i(0,-1,0),
+		Vector3i(0,0,1), Vector3i(0,0,-1)
+	]
+	for n in NEIGHBORS:
+		if visited_cells.has(coord + n):
+			return true
+	return false
+
+# =====================================================
+# PATHFINDING (3D A*)
 # =====================================================
 
 func find_path(start_input, target_input) -> Array[Vector3]:
 	var start_coord: Vector3i = world_to_grid(start_input) if start_input is Vector3 else start_input
 	var target_coord: Vector3i = world_to_grid(target_input) if target_input is Vector3 else target_input
-
 	var path: Array[Vector3] = []
 
 	if not is_within_bounds(start_coord) or not is_within_bounds(target_coord):
@@ -193,7 +392,6 @@ func find_path(start_input, target_input) -> Array[Vector3]:
 
 	var open_set: Array[Vector3i] = [start_coord]
 	var came_from: Dictionary = {}
-
 	var g_score: Dictionary = { start_coord: 0.0 }
 	var f_score: Dictionary = { start_coord: _heuristic(start_coord, target_coord) }
 
@@ -211,7 +409,6 @@ func find_path(start_input, target_input) -> Array[Vector3]:
 
 	while not open_set.is_empty() and iterations < max_iterations:
 		iterations += 1
-
 		var current = open_set[0]
 		var lowest_f = f_score.get(current, INF)
 		var current_idx = 0
@@ -272,209 +469,56 @@ func _find_nearest_free_neighbor(coord: Vector3i) -> Vector3i:
 	return Vector3i(-1, -1, -1)
 
 # =====================================================
-# COVERAGE & VISITATION
+# BOUNDARY LINE RENDERING
 # =====================================================
-
-func _mark_visited_around(world_pos: Vector3, drone_color: Color = Color.WHITE) -> bool:
-	var center_coord = world_to_grid(world_pos)
-	var radius_in_cells = int(ceil(sensor_radius / cell_size))
-	var new_cell_marked: bool = false
-
-	for dx in range(-radius_in_cells, radius_in_cells + 1):
-		for dy in range(-radius_in_cells, radius_in_cells + 1):
-			for dz in range(-radius_in_cells, radius_in_cells + 1):
-				var coord = center_coord + Vector3i(dx, dy, dz)
-				if is_within_bounds(coord):
-					var cell_world = grid_to_world(coord)
-					if world_pos.distance_squared_to(cell_world) <= sensor_radius * sensor_radius:
-						if not obstacle_cells.has(coord) and not blocked_cells.has(coord):
-							if not visited_cells.has(coord):
-								visited_cells[coord] = drone_color
-								new_cell_marked = true
-
-	return new_cell_marked
-
-func get_coverage_percentage() -> float:
-	if total_traversable_cells <= 0:
-		return 0.0
-	return (float(visited_cells.size()) / float(total_traversable_cells)) * 100.0
-
-func reset_grid() -> void:
-	visited_cells.clear()
-	obstacle_cells.clear()
-	blocked_cells.clear()
-
-	if is_instance_valid(_trail_multimesh_instance) and _trail_multimesh_instance.multimesh != null:
-		_trail_multimesh_instance.multimesh.instance_count = 0
-
-	var root = get_tree().current_scene if get_tree() else null
-	if root:
-		var nfz_manager = root.get_node_or_null("NoFlyZoneManager")
-		if is_instance_valid(nfz_manager) and nfz_manager.has_method("populate_blocked_cells"):
-			nfz_manager.populate_blocked_cells(self)
-
-	_update_total_traversable_count()
-
-func _update_total_traversable_count() -> void:
-	var blocked_count = blocked_cells.size() + obstacle_cells.size()
-	total_traversable_cells = max(1, _total_grid_volume - blocked_count)
-
-# =====================================================
-# OBSTACLE & HAZARD REGISTRATION (POLYMORPHIC)
-# =====================================================
-
-func register_obstacle(target) -> void:
-	if target == null:
+func _create_boundary_lines() -> void:
+	if not show_boundary_lines or DisplayServer.get_name() == "headless":
 		return
 
-	if target is Node3D:
-		var pos = target.global_position
-		if "radius" in target:
-			_register_sphere_obstacle(pos, float(target.radius))
-		elif "size" in target and target.size is Vector3:
-			_register_box_obstacle(pos, target.size)
-		elif target.has_node("CollisionShape3D"):
-			var col_shape = target.get_node("CollisionShape3D")
-			if is_instance_valid(col_shape) and col_shape.shape is BoxShape3D:
-				_register_box_obstacle(pos, col_shape.shape.size)
-			elif is_instance_valid(col_shape) and col_shape.shape is SphereShape3D:
-				_register_sphere_obstacle(pos, col_shape.shape.radius)
-			else:
-				_mark_single_cell_obstacle(world_to_grid(pos))
-		else:
-			_mark_single_cell_obstacle(world_to_grid(pos))
+	if is_instance_valid(_boundary_mesh_instance):
+		_boundary_mesh_instance.queue_free()
 
-	elif target is Vector3:
-		_mark_single_cell_obstacle(world_to_grid(target))
+	_boundary_mesh_instance = MeshInstance3D.new()
+	_boundary_mesh_instance.name = "GridBoundaryVisual"
+	add_child(_boundary_mesh_instance)
+	_boundary_mesh_instance.global_position = global_position
 
-	elif target is Vector3i:
-		_mark_single_cell_obstacle(target)
+	var mat = StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = boundary_color
+	mat.no_depth_test = true
+	mat.render_priority = 2
 
-	elif target is Array:
-		for item in target:
-			register_obstacle(item)
+	var imm_mesh = ImmediateMesh.new()
+	imm_mesh.surface_begin(Mesh.PRIMITIVE_LINES)
 
-	_update_total_traversable_count()
+	var w = float(grid_size.x) * cell_size
+	var h = float(grid_size.y) * cell_size
+	var d = float(grid_size.z) * cell_size
 
-func unregister_obstacle(target) -> void:
-	if target == null:
-		return
+	var v0 = Vector3(0, 0, 0); var v1 = Vector3(w, 0, 0)
+	var v2 = Vector3(w, 0, d); var v3 = Vector3(0, 0, d)
+	var v4 = Vector3(0, h, 0); var v5 = Vector3(w, h, 0)
+	var v6 = Vector3(w, h, d); var v7 = Vector3(0, h, d)
 
-	if target is Node3D:
-		obstacle_cells.erase(world_to_grid(target.global_position))
-	elif target is Vector3:
-		obstacle_cells.erase(world_to_grid(target))
-	elif target is Vector3i:
-		obstacle_cells.erase(target)
+	imm_mesh.surface_add_vertex(v0); imm_mesh.surface_add_vertex(v1)
+	imm_mesh.surface_add_vertex(v1); imm_mesh.surface_add_vertex(v2)
+	imm_mesh.surface_add_vertex(v2); imm_mesh.surface_add_vertex(v3)
+	imm_mesh.surface_add_vertex(v3); imm_mesh.surface_add_vertex(v0)
 
-	_update_total_traversable_count()
+	imm_mesh.surface_add_vertex(v4); imm_mesh.surface_add_vertex(v5)
+	imm_mesh.surface_add_vertex(v5); imm_mesh.surface_add_vertex(v6)
+	imm_mesh.surface_add_vertex(v6); imm_mesh.surface_add_vertex(v7)
+	imm_mesh.surface_add_vertex(v7); imm_mesh.surface_add_vertex(v4)
 
-func _mark_single_cell_obstacle(coord: Vector3i) -> void:
-	if is_within_bounds(coord):
-		obstacle_cells[coord] = true
-		visited_cells.erase(coord)
+	imm_mesh.surface_add_vertex(v0); imm_mesh.surface_add_vertex(v4)
+	imm_mesh.surface_add_vertex(v1); imm_mesh.surface_add_vertex(v5)
+	imm_mesh.surface_add_vertex(v2); imm_mesh.surface_add_vertex(v6)
+	imm_mesh.surface_add_vertex(v3); imm_mesh.surface_add_vertex(v7)
 
-func _register_sphere_obstacle(world_pos: Vector3, radius: float) -> void:
-	var center = world_to_grid(world_pos)
-	var r_cells = int(ceil(radius / cell_size))
-
-	for dx in range(-r_cells, r_cells + 1):
-		for dy in range(-r_cells, r_cells + 1):
-			for dz in range(-r_cells, r_cells + 1):
-				var coord = center + Vector3i(dx, dy, dz)
-				if is_within_bounds(coord):
-					var cell_pos = grid_to_world(coord)
-					if world_pos.distance_squared_to(cell_pos) <= radius * radius:
-						_mark_single_cell_obstacle(coord)
-
-func _register_box_obstacle(world_pos: Vector3, box_size: Vector3) -> void:
-	var half = box_size * 0.5
-	var min_coord = world_to_grid(world_pos - half)
-	var max_coord = world_to_grid(world_pos + half)
-
-	for x in range(min_coord.x, max_coord.x + 1):
-		for y in range(min_coord.y, max_coord.y + 1):
-			for z in range(min_coord.z, max_coord.z + 1):
-				_mark_single_cell_obstacle(Vector3i(x, y, z))
-
-func is_cell_strictly_free(coord: Vector3i) -> bool:
-	if not is_within_bounds(coord):
-		return false
-	if obstacle_cells.has(coord) or blocked_cells.has(coord):
-		return false
-	return true
-
-# =====================================================
-# PATH & STEP SAFETY CHECKS
-# =====================================================
-
-func is_straight_path_safe(from_coord: Vector3i, to_coord: Vector3i) -> bool:
-	if not is_within_bounds(to_coord):
-		return false
-	return not is_straight_path_hazardous(from_coord, to_coord)
-
-func is_straight_path_hazardous(from_coord: Vector3i, to_coord: Vector3i) -> bool:
-	var steps = int(max(abs(to_coord.x - from_coord.x), max(abs(to_coord.y - from_coord.y), abs(to_coord.z - from_coord.z))))
-	if steps == 0:
-		return not is_cell_strictly_free(from_coord)
-
-	for s in range(steps + 1):
-		var t = float(s) / float(steps)
-		var check_coord = Vector3i(
-			int(round(lerp(float(from_coord.x), float(to_coord.x), t))),
-			int(round(lerp(float(from_coord.y), float(to_coord.y), t))),
-			int(round(lerp(float(from_coord.z), float(to_coord.z), t)))
-		)
-		if not is_cell_strictly_free(check_coord):
-			return true
-	return false
-
-func get_adjacent_octree_center(current_coord: Vector3i, direction_idx: int) -> Vector3i:
-	const DIRS = [
-		Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
-		Vector3i(0, 1, 0), Vector3i(0, -1, 0),
-		Vector3i(0, 0, 1), Vector3i(0, 0, -1)
-	]
-	if direction_idx < 0 or direction_idx >= DIRS.size():
-		return current_coord
-
-	var target = current_coord + DIRS[direction_idx] * octree_step_size
-	target.x = clampi(target.x, 0, grid_size.x - 1)
-	target.y = clampi(target.y, 0, grid_size.y - 1)
-	target.z = clampi(target.z, 0, grid_size.z - 1)
-	return target
-
-# =====================================================
-# FRONTIER CENTROIDS
-# =====================================================
-
-func get_frontier_centroids(max_count: int) -> Array[Vector3]:
-	var frontiers: Array[Vector3] = []
-	if visited_cells.is_empty():
-		return frontiers
-
-	var step = 4
-	for x in range(0, grid_size.x, step):
-		for y in range(0, grid_size.y, step):
-			for z in range(0, grid_size.z, step):
-				var coord = Vector3i(x, y, z)
-				if not visited_cells.has(coord) and is_cell_strictly_free(coord):
-					if _has_visited_neighbor(coord):
-						frontiers.append(grid_to_world(coord))
-						if frontiers.size() >= max_count:
-							return frontiers
-	return frontiers
-
-func _has_visited_neighbor(coord: Vector3i) -> bool:
-	const NEIGHBORS = [
-		Vector3i(1,0,0), Vector3i(-1,0,0),
-		Vector3i(0,1,0), Vector3i(0,-1,0),
-		Vector3i(0,0,1), Vector3i(0,0,-1)
-	]
-	for n in NEIGHBORS:
-		if visited_cells.has(coord + n):
-			return true
-	return false
+	imm_mesh.surface_end()
+	_boundary_mesh_instance.mesh = imm_mesh
+	_boundary_mesh_instance.material_override = mat
 
 # =====================================================
 # COORDINATE CONVERSIONS

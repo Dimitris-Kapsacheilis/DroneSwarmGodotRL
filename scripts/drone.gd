@@ -6,7 +6,8 @@ extends RigidBody3D
 
 @export var drone_color: Color = Color.WHITE
 @export var drone_id: int = -1
-
+@export var flight_speed: float = 18.0 # Scaled dynamically by the HUD slider
+@export var follow_strength: float = 14.0
 # Battery Configuration
 @export var max_battery: float = 120.0 # Time in seconds until the battery depletes (e.g., 20 minutes)
 var current_battery: float = 120.0
@@ -115,13 +116,26 @@ func _apply_color() -> void:
 
 	print("Drone ", drone_id + 1, " colored ", drone_color)
 
-func go_to_waypoint(pos: Vector3, waypoint_index: int = -1) -> void:
-	target_waypoint = pos
-	assigned_waypoint_index = waypoint_index
-	leader = null
-	formation_offset = Vector3.ZERO
-	in_swarm_mode = false
+func go_to_waypoint(delta: float) -> void:
+	var to_target = target_waypoint - global_position
+	var distance = to_target.length()
+	if distance < 0.5:
+		linear_velocity = linear_velocity.lerp(Vector3.ZERO, 15.0 * delta)
+		if distance < 0.3:
+			if assigned_waypoint_index != -1 and swarm_controller:
+				swarm_controller.clear_waypoint_color(assigned_waypoint_index)
+			target_waypoint = Vector3.INF
+			assigned_waypoint_index = -1
+			print("Drone ", drone_id + 1, " arrived at waypoint!")
+		return
 
+	# Uses dynamic flight_speed
+	var desired_vel = to_target.normalized() * flight_speed
+	var steering = (desired_vel - linear_velocity) * 28.0
+	apply_central_force(steering + Vector3.UP * 9.8 * mass)
+	angular_damp = 4.0
+	linear_damp = 0.25
+	
 func set_formation_target(offset: Vector3, new_leader: Drone, formation: String) -> void:
 	formation_offset = offset
 	leader = new_leader

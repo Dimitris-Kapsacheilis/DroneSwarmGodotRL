@@ -28,44 +28,73 @@ func clear_zones() -> void:
 	zones.clear()
 
 func generate_random_zones() -> void:
+	clear_zones()
+	
 	var placed_rects: Array[Rect2] = []
-	var max_attempts := 150
+	var max_batch_retries := 15
+	var cur_max_size := max_zone_size
+	var cur_min_size := min_zone_size
 
-	for i in range(num_zones):
-		var zone_placed := false
-		
-		for attempt in range(max_attempts):
-			var width := randf_range(min_zone_size, max_zone_size)
-			var height := randf_range(min_zone_size, max_zone_size)
-			
-			var min_x := map_area.position.x + drone_clearance
-			var min_y := map_area.position.y + drone_clearance
-			var max_x := map_area.end.x - drone_clearance - width
-			var max_y := map_area.end.y - drone_clearance - height
-			
-			if max_x < min_x or max_y < min_y:
-				continue
+	for batch_retry in range(max_batch_retries):
+		placed_rects.clear()
+		var all_placed := true
+
+		for i in range(num_zones):
+			var zone_placed := false
+			var max_attempts := 100
+
+			for attempt in range(max_attempts):
+				# Dynamically reduce candidate size if earlier attempts struggle
+				var shrink_factor := 1.0 - (float(attempt) / float(max_attempts)) * 0.4
+				var dynamic_max := maxf(cur_min_size, cur_max_size * shrink_factor)
 				
-			var pos_x := randf_range(min_x, max_x)
-			var pos_y := randf_range(min_y, max_y)
-			
-			var candidate_rect := Rect2(pos_x, pos_y, width, height)
-			var clearance_rect := candidate_rect.grow(drone_clearance)
-			var overlaps := false
-			
-			for existing_rect in placed_rects:
-				if clearance_rect.intersects(existing_rect):
-					overlaps = true
+				var width := randf_range(cur_min_size, dynamic_max)
+				var height := randf_range(cur_min_size, dynamic_max)
+
+				var min_x := map_area.position.x + drone_clearance
+				var min_y := map_area.position.y + drone_clearance
+				var max_x := map_area.end.x - drone_clearance - width
+				var max_y := map_area.end.y - drone_clearance - height
+
+				if max_x < min_x or max_y < min_y:
+					continue
+
+				var pos_x := randf_range(min_x, max_x)
+				var pos_y := randf_range(min_y, max_y)
+
+				var candidate_rect := Rect2(pos_x, pos_y, width, height)
+				var clearance_rect := candidate_rect.grow(drone_clearance)
+				var overlaps := false
+
+				for existing_rect in placed_rects:
+					if clearance_rect.intersects(existing_rect):
+						overlaps = true
+						break
+
+				if not overlaps:
+					placed_rects.append(candidate_rect)
+					zone_placed = true
 					break
-			
-			if not overlaps:
-				placed_rects.append(candidate_rect)
-				instantiate_zone(candidate_rect)
-				zone_placed = true
-				break
-		
-		if not zone_placed:
-			push_warning("Could not place zone %d without blocking drone clearance." % [i + 1])
+
+			if not zone_placed:
+				all_placed = false
+				break # Failed to place all zones at this size, trigger a smaller batch retry
+
+		if all_placed:
+			# Instantiate all zones once a valid complete layout is found
+			for rect in placed_rects:
+				instantiate_zone(rect)
+			return
+
+		# If we couldn't fit all zones, shrink the size bounds for all zones and retry
+		cur_max_size = maxf(cur_min_size, cur_max_size * 0.85)
+		if cur_max_size <= cur_min_size:
+			cur_min_size = maxf(1.5, cur_min_size * 0.85)
+
+	# Fallback if still tight: instantiate whatever was successfully placed
+	push_warning("Could not place all %d zones even after shrinking sizes. Placed %d zones." % [num_zones, placed_rects.size()])
+	for rect in placed_rects:
+		instantiate_zone(rect)
 
 func instantiate_zone(rect: Rect2) -> void:
 	var zone = NoFlyZone.new()

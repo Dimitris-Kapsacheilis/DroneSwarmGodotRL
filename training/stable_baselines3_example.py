@@ -3,6 +3,7 @@ import datetime
 import pathlib
 from typing import Callable
 
+import gymnasium as gym
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import (
@@ -10,6 +11,7 @@ from stable_baselines3.common.callbacks import (
     CallbackList,
     CheckpointCallback,
 )
+from stable_baselines3.common.vec_env.base_vec_env import VecEnvWrapper
 from stable_baselines3.common.vec_env.vec_monitor import VecMonitor
 from stable_baselines3.common.vec_env.vec_normalize import VecNormalize
 
@@ -132,6 +134,68 @@ parser.add_argument("--gamma", default=0.99, type=float, help="Discount factor")
 args, extras = parser.parse_known_args()
 
 
+class GodotInfoExtractor(VecEnvWrapper):
+    """
+    Unpacks '_metrics' from Godot, strips it from observation space,
+    and injects it directly into SB3's 'infos' dictionary.
+    """
+    def __init__(self, venv, metric_names):
+        super().__init__(venv)
+        self.metric_names = metric_names
+
+        if isinstance(self.observation_space, gym.spaces.Dict):
+            new_spaces = {k: v for k, v in self.observation_space.spaces.items() if k != "_metrics"}
+            self.observation_space = gym.spaces.Dict(new_spaces)
+
+    def reset(self):
+        obs = self.venv.reset()
+        if isinstance(obs, dict) and "_metrics" in obs:
+            obs = {k: v for k, v in obs.items() if k != "_metrics"}
+        return obs
+
+    def step_async(self, actions):
+        self.venv.step_async(actions)
+
+    def step_wait(self):
+        obs, rewards, dones, infos = self.venv.step_wait()
+
+        if isinstance(obs, dict) and "_metrics" in obs:
+            metrics_arr = obs["_metrics"]
+            for env_idx in range(self.num_envs):
+                raw_metrics = metrics_arr[env_idx] if len(metrics_arr) > env_idx else []
+                for name_idx, name in enumerate(self.metric_names):
+                    val = float(raw_metrics[name_idx]) if len(raw_metrics) > name_idx else 0.0
+                    infos[env_idx][name] = val
+
+            clean_obs = {k: v for k, v in obs.items() if k != "_metrics"}
+            return clean_obs, rewards, dones, infos
+
+        return obs, rewards, dones, infos
+
+
+class MetricLoggerCallback(BaseCallback):
+    """
+    Forces all custom info_keywords recorded by VecMonitor into
+    the terminal table and TensorBoard on every PPO iteration.
+    """
+    def __init__(self, metric_names, verbose: int = 0):
+        super().__init__(verbose)
+        self.metric_names = metric_names
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        ep_buffer = self.model.ep_info_buffer
+        if ep_buffer and len(ep_buffer) > 0:
+            for name in self.metric_names:
+                if name == "is_success":
+                    continue
+                vals = [ep[name] for ep in ep_buffer if name in ep]
+                if len(vals) > 0:
+                    self.logger.record(f"rollout/{name}", float(np.mean(vals)))
+
+
 class RollingBestModelCallback(BaseCallback):
     def __init__(
         self,
@@ -232,6 +296,7 @@ path_best_model = run_dir / "best_model"
 run_dir.mkdir(parents=True, exist_ok=True)
 print(f"Run output directory: {run_dir}")
 
+# 1. Base Godot RL Environment
 env = StableBaselinesGodotEnv(
     env_path=args.env_path,
     show_window=args.viz,
@@ -240,7 +305,20 @@ env = StableBaselinesGodotEnv(
     speedup=args.speedup,
     action_repeat=args.action_repeat,
 )
-env = VecMonitor(env)
+
+# 2. Extract metrics into info dict
+info_keywords = (
+    "coverage_pct",
+    "is_success",
+    "hit_obstacle",
+    "hit_nfz",
+    "hit_teammate",
+    "battery_depleted",
+)
+env = GodotInfoExtractor(env, metric_names=info_keywords)
+
+# 3. Native SB3 VecMonitor tracks info_keywords
+env = VecMonitor(env, info_keywords=info_keywords)
 
 norm_path = None
 if args.resume_model_path:
@@ -279,7 +357,6 @@ policy_kwargs = dict(
     net_arch=dict(pi=[512, 512], vf=[512, 512])
 )
 
-# Ensure batch_size is a clean divisor of buffer size
 total_buffer_size = args.n_steps * env.num_envs
 effective_batch_size = args.batch_size
 while total_buffer_size % effective_batch_size != 0 and effective_batch_size > 64:
@@ -319,7 +396,9 @@ try:
             action, _state = model.predict(obs, deterministic=True)
             obs, reward, done, info = env.step(action)
     else:
-        callbacks = []
+        callbacks = [
+            MetricLoggerCallback(metric_names=info_keywords)
+        ]
 
         if args.save_checkpoint_frequency:
             checkpoint_freq = max(1, args.save_checkpoint_frequency // env.num_envs)
