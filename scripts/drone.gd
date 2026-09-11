@@ -2,14 +2,14 @@ class_name Drone
 extends RigidBody3D
 
 @onready var ai_controller: Node = get_node_or_null("AIController3D")
-@onready var bumper: Area3D = get_node_or_null("Bumper") # Reference to the new Area3D bumper node
-
+@onready var bumper: Area3D = get_node_or_null("Bumper") # Reference to the Area3D bumper node
+@export var enable_physical_teammate_collision: bool = true
 @export var drone_color: Color = Color.WHITE
 @export var drone_id: int = -1
 @export var flight_speed: float = 18.0 # Scaled dynamically by the HUD slider
 @export var follow_strength: float = 14.0
 # Battery Configuration
-@export var max_battery: float = 120.0 # Time in seconds until the battery depletes (e.g., 20 minutes)
+@export var max_battery: float = 120.0 # Time in seconds until the battery depletes
 var current_battery: float = 120.0
 
 signal collided(collider: Node)
@@ -46,33 +46,44 @@ func _ready() -> void:
 	
 	if ai_controller != null and ai_controller.has_method("init"):
 		ai_controller.init(self)
-	# ONLY apply materials/colors if we are NOT running headless
-	print("Display Mode :",DisplayServer.get_name())
-
+	
 	if DisplayServer.get_name() != "headless":
 		_apply_color()
 	randomize()
 	reset_battery()
 	add_to_group("drones")
 	
-	# Connect the Area3D bumper's body_entered signal instead of the rigid body's contact monitor
-	if bumper != null:
-		if not bumper.body_entered.is_connected(_on_bumper_body_entered):
-			bumper.body_entered.connect(_on_bumper_body_entered)
-	else:
-		push_error("Drone %d: Bumper (Area3D) child node was not found!" % drone_id)
-	
-	# Place the drone on Layer 1
+	# Place the drone body on Layer 1 (Drones)
 	set_collision_layer_value(1, true)
-	
-	# Keep these enabled so the drone physically bounces off Layer 1 and Layer 2
-	set_collision_mask_value(1, true)
+	# Allow rigid physics to interact with Layer 1 (drones) and Layer 2 (obstacles)
+	set_collision_mask_value(1, enable_physical_teammate_collision)
 	set_collision_mask_value(2, true)
 
+	# Configure Bumper Area3D for Drone-to-Drone and Drone-to-Obstacle detection
+	if bumper != null:
+		bumper.set_collision_layer_value(1, true)
+		bumper.set_collision_mask_value(1, enable_physical_teammate_collision) # Detect other drones on Layer 1
+		bumper.set_collision_mask_value(2, true) # Detect obstacles on Layer 2
+
+		if not bumper.body_entered.is_connected(_on_bumper_body_entered):
+			bumper.body_entered.connect(_on_bumper_body_entered)
+		if not bumper.area_entered.is_connected(_on_bumper_area_entered):
+			bumper.area_entered.connect(_on_bumper_area_entered)
+	else:
+		push_error("Drone %d: Bumper (Area3D) child node was not found!" % drone_id)
+
 func _on_bumper_body_entered(body: Node) -> void:
-	# Triggered when the Area3D bumper overlaps with an obstacle on Layer 2
+	if body == self or is_ancestor_of(body):
+		return
 	collided.emit(body)
-	
+
+func _on_bumper_area_entered(area: Area3D) -> void:
+	if area == bumper or is_ancestor_of(area):
+		return
+	var other_drone = area.get_parent()
+	if is_instance_valid(other_drone) and other_drone != self:
+		collided.emit(other_drone)
+
 func game_over():
 	if ai_controller != null:
 		if "done" in ai_controller:
@@ -93,7 +104,6 @@ func is_in_no_fly_zone() -> bool:
 	return false	
 	
 func _apply_color() -> void:
-	# Double check to prevent dummy renderer crash
 	if DisplayServer.get_name() == "headless":
 		return
 	var meshes = find_children("*", "MeshInstance3D", true, true)
@@ -102,7 +112,6 @@ func _apply_color() -> void:
 		return
 
 	for mesh: MeshInstance3D in meshes:
-		# Ensure the mesh actually exists before overriding material
 		if mesh.mesh == null:
 			continue
 		var mat := StandardMaterial3D.new()
@@ -114,8 +123,6 @@ func _apply_color() -> void:
 		mat.metallic = 0.1
 		mesh.material_override = mat
 
-	print("Drone ", drone_id + 1, " colored ", drone_color)
-
 func go_to_waypoint(delta: float) -> void:
 	var to_target = target_waypoint - global_position
 	var distance = to_target.length()
@@ -126,10 +133,8 @@ func go_to_waypoint(delta: float) -> void:
 				swarm_controller.clear_waypoint_color(assigned_waypoint_index)
 			target_waypoint = Vector3.INF
 			assigned_waypoint_index = -1
-			print("Drone ", drone_id + 1, " arrived at waypoint!")
 		return
 
-	# Uses dynamic flight_speed
 	var desired_vel = to_target.normalized() * flight_speed
 	var steering = (desired_vel - linear_velocity) * 28.0
 	apply_central_force(steering + Vector3.UP * 9.8 * mass)
@@ -188,15 +193,11 @@ func set_boids_data(drones_list: Array[Drone]) -> void:
 	all_drones = drones_list
 
 func _physics_process(delta: float) -> void:
-	# Slowly drain battery over time
 	current_battery = maxf(current_battery - delta, 0.0)
 
 	if ai_controller != null and "needs_reset" in ai_controller:
 		if ai_controller.needs_reset:
-			# 1. Reset the drone's physical body/velocities
 			reset_flight_state(global_position, Vector3.ZERO)
-			
-			# 2. Reset the RL controller state
 			if ai_controller.has_method("reset"):
 				ai_controller.reset()
 			ai_controller.needs_reset = false
@@ -225,7 +226,6 @@ func _go_to_waypoint(delta: float) -> void:
 				swarm_controller.clear_waypoint_color(assigned_waypoint_index)
 			target_waypoint = Vector3.INF
 			assigned_waypoint_index = -1
-			print("Drone ", drone_id + 1, " arrived at waypoint!")
 		return
 
 	var desired_vel = to_target.normalized() * 18.0
@@ -294,3 +294,53 @@ func _keyboard_control(delta: float) -> void:
 
 func _vector3_to_array(value: Vector3) -> Array[float]:
 	return [value.x, value.y, value.z]
+
+# =====================================================
+# NORTH-EAST-DOWN (NED) CONVERSION HELPERS
+# =====================================================
+
+## Converts Godot coordinates (+X East, +Y Up, -Z North) to NED (+X North, +Y East, +Z Down).
+static func godot_to_ned(godot_vec: Vector3) -> Vector3:
+	return Vector3(
+		-godot_vec.z, # North
+		 godot_vec.x, # East
+		-godot_vec.y  # Down
+	)
+
+## Converts NED coordinates (+X North, +Y East, +Z Down) to Godot coordinates (+X East, +Y Up, -Z North).
+static func ned_to_godot(ned_vec: Vector3) -> Vector3:
+	return Vector3(
+		 ned_vec.y, # East (X)
+		-ned_vec.z, # Up   (Y)
+		-ned_vec.x  # Forward/North (-Z)
+	)
+
+## Returns the drone's position in NED frame relative to an optional world origin.
+func get_ned_position(origin: Vector3 = Vector3.ZERO) -> Vector3:
+	return godot_to_ned(global_position - origin)
+
+## Returns the drone's linear velocity in NED frame.
+func get_ned_velocity() -> Vector3:
+	var vel = linear_velocity# if self is RigidBody3D else (vel if "velocity" in self else Vector3.ZERO)
+	return godot_to_ned(vel)
+
+## Sets the drone's position from NED frame relative to an optional world origin.
+func set_position_from_ned(ned_pos: Vector3, origin: Vector3 = Vector3.ZERO) -> void:
+	global_position = origin + ned_to_godot(ned_pos)
+
+# Add to drone.gd
+
+## Returns all obstacles currently perceived within a given sensor radius with full SLAM telemetry
+func get_perceived_obstacles_slam(radius: float = 12.0) -> Array[Dictionary]:
+	var results: Array[Dictionary] = []
+	var obstacles = get_tree().get_nodes_in_group("obstacles")
+	for obs in obstacles:
+		if is_instance_valid(obs) and not obs.is_queued_for_deletion():
+			var dist = global_position.distance_to(obs.global_position)
+			if dist <= radius:
+				var tag = obs.get_node_or_null("ObstacleTag") as ObstacleTag
+				if tag != null:
+					var payload = tag.get_slam_payload()
+					payload["relative_distance"] = dist
+					results.append(payload)
+	return results

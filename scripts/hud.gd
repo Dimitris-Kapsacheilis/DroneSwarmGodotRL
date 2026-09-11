@@ -1,3 +1,4 @@
+# hud.gd
 extends Control
 
 @onready var coveragetext: Label = get_node_or_null("Coverage")
@@ -11,11 +12,21 @@ extends Control
 # --- Container for dynamic checkboxes ---
 @onready var trail_toggles_container: VBoxContainer = get_node_or_null("TrailToggles")
 
+# --- Multi-Screen Viewport Management ---
+# Searches for MultiViewContainer either as a sibling or under root
+@onready var multi_view_container: GridContainer = get_node_or_null("/root/Swarm Test/MultiViewContainer")
+@onready var layout_option_button: OptionButton = get_node_or_null("ViewLayoutOption")
+
+var view_containers: Array[SubViewportContainer] = []
 var master_all_checkbox: CheckBox = null
 var created_drone_checkboxes: Dictionary = {}
 var _is_updating_toggles: bool = false
 
 func _ready() -> void:
+	# Fallback search for MultiViewContainer if path differs
+	if multi_view_container == null:
+		multi_view_container = get_tree().root.find_child("MultiViewContainer", true, false)
+
 	# 1. Setup Speed Slider
 	if speed_slider != null:
 		speed_slider.value_changed.connect(_on_speed_slider_changed)
@@ -26,19 +37,87 @@ func _ready() -> void:
 	# 2. Setup Checkboxes
 	_setup_trail_toggle_ui()
 
+	# 3. Setup Multi-Screen Dropdown (Default: Top-Down view)
+	_setup_layout_dropdown()
+
 func _process(_delta: float) -> void:
 	# Update coverage text
 	if grid_manager != null and coveragetext != null:
 		coveragetext.text = "%.2f%%" % grid_manager.get_coverage_percentage()
 
-	# Update camera mode text
-	var cam = get_viewport().get_camera_3d()
-	if cam != null and "current_mode" in cam and camera_mode_text != null:
-		var mode_name = cam.CameraMode.keys()[cam.current_mode]
-		camera_mode_text.text = "Camera Mode : " + mode_name
-
 	# Dynamically register drone checkboxes as drones spawn
 	_sync_drone_checkboxes()
+
+# =====================================================
+# MULTI-SCREEN VIEWPORT LAYOUTS
+# =====================================================
+
+func _setup_layout_dropdown() -> void:
+	view_containers.clear()
+	if multi_view_container != null:
+		for child in multi_view_container.get_children():
+			if child is SubViewportContainer:
+				view_containers.append(child)
+
+	if layout_option_button != null:
+		layout_option_button.clear()
+		layout_option_button.add_item("1 Screen (Top-Down View)", 0)
+		layout_option_button.add_item("1 Screen (Follow View)", 1)
+		layout_option_button.add_item("1 Screen (Manual View)", 2)
+		layout_option_button.add_item("1 Screen (Side View)", 3)
+		layout_option_button.add_item("2 Screens (Top-Down + Follow)", 4)
+		layout_option_button.add_item("2 Screens (Top-Down + Side)", 5)
+		layout_option_button.add_item("4 Screens (All Views)", 6)
+		
+		layout_option_button.item_selected.connect(_on_layout_selected)
+		
+		# Set default to index 0: 1 Screen (Top-Down View)
+		layout_option_button.selected = 0
+		_on_layout_selected(0)
+
+func _on_layout_selected(index: int) -> void:
+	if multi_view_container == null or view_containers.size() < 4:
+		return
+
+	# Hide all views first
+	for container in view_containers:
+		container.visible = false
+
+	# View mapping based on scene order:
+	# view_containers[0] = Follow
+	# view_containers[1] = Manual
+	# view_containers[2] = Top-Down / Static
+	# view_containers[3] = Side
+	match index:
+		0: # 1 Screen (Top-Down View)
+			multi_view_container.columns = 1
+			view_containers[2].visible = true
+		1: # 1 Screen (Follow View)
+			multi_view_container.columns = 1
+			view_containers[0].visible = true
+		2: # 1 Screen (Manual View)
+			multi_view_container.columns = 1
+			view_containers[1].visible = true
+		3: # 1 Screen (Side View)
+			multi_view_container.columns = 1
+			view_containers[3].visible = true
+		4: # 2 Screens (Top-Down + Follow)
+			multi_view_container.columns = 2
+			view_containers[2].visible = true
+			view_containers[0].visible = true
+		5: # 2 Screens (Top-Down + Side)
+			multi_view_container.columns = 2
+			view_containers[2].visible = true
+			view_containers[3].visible = true
+		6: # 4 Screens (All 4)
+			multi_view_container.columns = 2
+			view_containers[0].visible = true
+			view_containers[1].visible = true
+			view_containers[2].visible = true
+			view_containers[3].visible = true
+
+	if camera_mode_text != null and layout_option_button != null:
+		camera_mode_text.text = "View: " + layout_option_button.get_item_text(index)
 
 # =====================================================
 # SPEED SLIDER LOGIC
@@ -69,7 +148,6 @@ func _setup_trail_toggle_ui() -> void:
 	for child in trail_toggles_container.get_children():
 		child.queue_free()
 
-	# Master Toggle: "All Trails"
 	master_all_checkbox = CheckBox.new()
 	master_all_checkbox.text = "All Trails"
 	master_all_checkbox.button_pressed = true
@@ -112,7 +190,6 @@ func _on_single_drone_toggled(d_id: int, toggled_on: bool) -> void:
 	if _is_updating_toggles:
 		return
 
-	# Update the Master "All Trails" checkbox state without cascading back
 	_is_updating_toggles = true
 	var all_checked = true
 	for id in created_drone_checkboxes:

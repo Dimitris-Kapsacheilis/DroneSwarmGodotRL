@@ -10,9 +10,20 @@ const Drone = preload("res://scripts/drone.gd")
 var drone: Node3D = null
 var navigator: Node3D = null
 
+@export_group("Episode Limits")
+@export var max_episode_steps: int = 6000
+
+@export_group("Observation Noise & Domain Randomization")
+@export var obs_noise: bool = false
+@export var position_noise_std: float = 0.02   # SLAM drift / position noise (normalized)
+@export var velocity_noise_std: float = 0.04   # IMU / velocity estimation noise (normalized)
+@export var range_noise_std: float = 0.03      # Lidar / rangefinder distance noise (normalized)
+@export var battery_noise_std: float = 0.01    # Battery sensor telemetry noise
+
 @export_group("Safety Enforcement")
 @export var enforce_blocked_cells: bool = false
 @export var enable_action_masking: bool = false
+@export var enable_teammate_collision: bool = true   # <--- ADD THIS TOGGLE
 
 @export_group("Observation Dimensions")
 @export var max_tracked_frontiers: int = 3
@@ -157,26 +168,72 @@ func _connect_drone_signals() -> void:
 	if drone.has_signal("collided") and not drone.collided.is_connected(_on_drone_collided):
 		drone.collided.connect(_on_drone_collided)
 		_signals_connected = true
-
+		
 func _on_drone_collided(collider: Node) -> void:
 	if done or violated or hit_obstacle or hit_teammate or battery_depleted:
 		return
 
+	# Teammate / Drone-to-Drone Collision
 	if is_instance_valid(collider) and (collider.is_in_group("drones") or collider is Drone):
+		if not enable_teammate_collision:
+			return # Ignore teammate collision completely when disabled
+
 		hit_teammate = true
 		if is_instance_valid(swarm_controller):
-			swarm_controller.trigger_swarm_failure("Teammate Collision (" + drone.name + ")", actions_taken)
+			swarm_controller.trigger_swarm_failure("Teammate Collision (" + drone.name + " with " + collider.name + ")", actions_taken)
+	
+	# Obstacle Collision
 	else:
 		hit_obstacle = true
+		var obs_type = _resolve_obstacle_type(collider)
 		if is_instance_valid(swarm_controller):
-			swarm_controller.trigger_swarm_failure("Obstacle Collision (" + drone.name + ")", actions_taken)
+			swarm_controller.trigger_swarm_failure("Obstacle Collision [" + obs_type + "] (" + drone.name + ")", actions_taken)
+			
+## Helper to extract the SLAM category / obstacle type from any part of the collider hierarchy
+func _resolve_obstacle_type(collider: Node) -> String:
+	if not is_instance_valid(collider):
+		return "UNKNOWN_OBSTACLE"
 
+	# Check collider, its parent, and its children for ObstacleTag
+	var tag: ObstacleTag = null
+	if collider.has_node("ObstacleTag"):
+		tag = collider.get_node("ObstacleTag") as ObstacleTag
+	elif collider.get_parent() and collider.get_parent().has_node("ObstacleTag"):
+		tag = collider.get_parent().get_node("ObstacleTag") as ObstacleTag
+	else:
+		tag = collider.find_child("ObstacleTag", true, false) as ObstacleTag
+
+	if tag != null:
+		return ObstacleTag.ObstacleCategory.keys()[tag.category]
+
+	# Fallback to node group or name if no tag found
+	if collider.is_in_group("obstacles"):
+		return collider.name
+	if collider.get_parent() and collider.get_parent().is_in_group("obstacles"):
+		return collider.get_parent().name
+
+	return "STATIC_STRUCTURE"
+	
 func _get_current_grid_pos() -> Vector3i:
 	if not is_instance_valid(drone) or not is_instance_valid(grid_manager):
 		return Vector3i.ZERO
 	if grid_manager.has_method("world_to_grid"):
 		return grid_manager.world_to_grid(drone.global_position)
 	return Vector3i(int(floor(drone.global_position.x)), int(floor(drone.global_position.y)), int(floor(drone.global_position.z)))
+
+# =====================================================
+# SENSOR NOISE HELPERS
+# =====================================================
+
+func _gaussian_noise(std: float) -> float:
+	var u1 = maxf(randf(), 1e-7)
+	var u2 = randf()
+	return std * sqrt(-2.0 * log(u1)) * cos(TAU * u2)
+
+func _noisy(val: float, std: float, min_val: float = -1.0, max_val: float = 1.0) -> float:
+	if not obs_noise or std <= 0.0:
+		return clampf(val, min_val, max_val)
+	return clampf(val + _gaussian_noise(std), min_val, max_val)
 
 # =====================================================
 # SWARM-LEVEL ATTRIBUTION SNAPSHOT
@@ -193,7 +250,6 @@ func _snapshot_terminal_stats() -> void:
 	var swarm_team = hit_teammate or ("Teammate" in reason)
 	var swarm_batt = battery_depleted or ("Battery" in reason)
 
-	# Mutual exclusivity ensures exact 1.0 (100%) sum
 	if is_success:
 		_terminal_snapshot = [float(coverage_pct), 1.0, 0.0, 0.0, 0.0, 0.0]
 	elif swarm_obs:
@@ -252,10 +308,14 @@ func get_obs() -> Dictionary:
 		battery_ratio = clampf(drone.current_battery / maxf(drone.max_battery, 1.0), 0.0, 1.0)
 
 	var obs: Array = [
-		norm_pos.x, norm_pos.y, norm_pos.z,
-		norm_vel.x, norm_vel.y, norm_vel.z,
+		_noisy(norm_pos.x, position_noise_std, 0.0, 1.0),
+		_noisy(norm_pos.y, position_noise_std, 0.0, 1.0),
+		_noisy(norm_pos.z, position_noise_std, 0.0, 1.0),
+		_noisy(norm_vel.x, velocity_noise_std, -1.0, 1.0),
+		_noisy(norm_vel.y, velocity_noise_std, -1.0, 1.0),
+		_noisy(norm_vel.z, velocity_noise_std, -1.0, 1.0),
 		coverage,
-		battery_ratio
+		_noisy(battery_ratio, battery_noise_std, 0.0, 1.0)
 	]
 
 	# 1. Frontiers
@@ -266,7 +326,11 @@ func get_obs() -> Dictionary:
 	for i in range(max_tracked_frontiers):
 		if i < centroids.size():
 			var rel = (centroids[i] - pos) / max_distance_reference
-			obs.append_array([clampf(rel.x, -1.0, 1.0), clampf(rel.y, -1.0, 1.0), clampf(rel.z, -1.0, 1.0)])
+			obs.append_array([
+				_noisy(rel.x, range_noise_std, -1.0, 1.0),
+				_noisy(rel.y, range_noise_std, -1.0, 1.0),
+				_noisy(rel.z, range_noise_std, -1.0, 1.0)
+			])
 		else:
 			obs.append_array([1.0, 1.0, 1.0])
 
@@ -282,11 +346,15 @@ func get_obs() -> Dictionary:
 	for i in range(max_tracked_nfz):
 		if i < distance_mappings.size():
 			var rel = distance_mappings[i].rel_vector / max_distance_reference
-			obs.append_array([clampf(rel.x, -1.0, 1.0), clampf(rel.y, -1.0, 1.0), clampf(rel.z, -1.0, 1.0)])
+			obs.append_array([
+				_noisy(rel.x, range_noise_std, -1.0, 1.0),
+				_noisy(rel.y, range_noise_std, -1.0, 1.0),
+				_noisy(rel.z, range_noise_std, -1.0, 1.0)
+			])
 		else:
 			obs.append_array([1.0, 1.0, 1.0])
-
-	# 3. Dynamic Obstacles
+# Inside AIController3D -> get_obs() - Section 3: Dynamic Obstacles
+	# 3. Dynamic Obstacles (Integrated with ObstacleTag / SLAM Module)
 	var raw_obstacles = get_tree().get_nodes_in_group("obstacles") if get_tree() else []
 	var obstacles = raw_obstacles.filter(func(n): return is_instance_valid(n) and not n.is_queued_for_deletion())
 	obstacles.sort_custom(func(a, b): return pos.distance_squared_to(a.global_position) < pos.distance_squared_to(b.global_position))
@@ -302,7 +370,16 @@ func get_obs() -> Dictionary:
 			var dist = delta_pos.length()
 			tracked_obstacle_distances.append(dist)
 
-			var obs_vel = obs_node.linear_velocity if obs_node is RigidBody3D else (obs_node.velocity if "velocity" in obs_node else Vector3.ZERO)
+			# Extract SLAM velocity
+			var obs_vel = Vector3.ZERO
+			var tag = obs_node.get_node_or_null("ObstacleTag") as ObstacleTag
+			if tag != null:
+				obs_vel = tag.estimated_velocity
+			elif obs_node is RigidBody3D:
+				obs_vel = obs_node.linear_velocity
+			elif "velocity" in obs_node:
+				obs_vel = obs_node.velocity
+
 			var rel_vel = obs_vel - vel
 
 			var closing_speed = 0.0
@@ -321,17 +398,20 @@ func get_obs() -> Dictionary:
 			var norm_rel_vel = rel_vel / max_velocity_reference
 
 			obs.append_array([
-				clampf(rel_pos.x, -1.0, 1.0), clampf(rel_pos.y, -1.0, 1.0), clampf(rel_pos.z, -1.0, 1.0),
-				clampf(norm_rel_vel.x, -1.0, 1.0), clampf(norm_rel_vel.y, -1.0, 1.0), clampf(norm_rel_vel.z, -1.0, 1.0),
-				norm_closing_speed,
-				norm_cpa_dist
+				_noisy(rel_pos.x, range_noise_std, -1.0, 1.0),
+				_noisy(rel_pos.y, range_noise_std, -1.0, 1.0),
+				_noisy(rel_pos.z, range_noise_std, -1.0, 1.0),
+				_noisy(norm_rel_vel.x, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_rel_vel.y, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_rel_vel.z, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_closing_speed, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_cpa_dist, range_noise_std, 0.0, 1.0)
 			])
 		else:
 			tracked_obstacle_distances.append(INF)
 			obs.append_array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
 	_current_obstacle_distances = tracked_obstacle_distances
-
 	# 4. Teammates
 	var raw_drones = get_tree().get_nodes_in_group("drones") if get_tree() else []
 	var other_drones = raw_drones.filter(func(d): return is_instance_valid(d) and d != drone and not d.is_queued_for_deletion())
@@ -356,10 +436,14 @@ func get_obs() -> Dictionary:
 			var norm_rel_vel = rel_vel / max_velocity_reference
 
 			obs.append_array([
-				clampf(rel_pos.x, -1.0, 1.0), clampf(rel_pos.y, -1.0, 1.0), clampf(rel_pos.z, -1.0, 1.0),
-				clampf(norm_rel_vel.x, -1.0, 1.0), clampf(norm_rel_vel.y, -1.0, 1.0), clampf(norm_rel_vel.z, -1.0, 1.0),
-				norm_closing_speed,
-				norm_cpa_dist
+				_noisy(rel_pos.x, range_noise_std, -1.0, 1.0),
+				_noisy(rel_pos.y, range_noise_std, -1.0, 1.0),
+				_noisy(rel_pos.z, range_noise_std, -1.0, 1.0),
+				_noisy(norm_rel_vel.x, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_rel_vel.y, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_rel_vel.z, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_closing_speed, velocity_noise_std, -1.0, 1.0),
+				_noisy(norm_cpa_dist, range_noise_std, 0.0, 1.0)
 			])
 		else:
 			obs.append_array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
@@ -385,7 +469,7 @@ func get_obs() -> Dictionary:
 		var dir_vec = Vector3(DIRECTIONS[dir_idx]).normalized()
 		var candidate_target_world = pos + dir_vec * step_distance
 		var dynamic_hazard_score = _evaluate_dynamic_action_hazard(pos, candidate_target_world, obstacles)
-		obs.append(dynamic_hazard_score)
+		obs.append(_noisy(dynamic_hazard_score, range_noise_std, -1.0, 1.0))
 
 	# 7. Local Visited state for each of the 6 directions
 	for dir_idx in range(DIRECTIONS.size()):
@@ -425,7 +509,7 @@ func _calculate_cpa_distance(delta_pos: Vector3, rel_vel: Vector3, horizon: floa
 	var t_cpa = -delta_pos.dot(rel_vel) / v_sq
 	var clamped_t = clampf(t_cpa, 0.0, horizon)
 	return (delta_pos + rel_vel * clamped_t).length()
-
+	
 func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, obstacles: Array) -> float:
 	var min_clearance := 999.0
 	var action_dir = (drone_end - drone_start)
@@ -434,7 +518,16 @@ func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, o
 		if not is_instance_valid(obs_node):
 			continue
 		var obs_pos = obs_node.global_position
-		var obs_vel = obs_node.linear_velocity if obs_node is RigidBody3D else (obs_node.velocity if "velocity" in obs_node else Vector3.ZERO)
+		
+		# SLAM-tracked velocity extraction
+		var obs_vel = Vector3.ZERO
+		var tag = obs_node.get_node_or_null("ObstacleTag") as ObstacleTag
+		if tag != null:
+			obs_vel = tag.estimated_velocity
+		elif obs_node is RigidBody3D:
+			obs_vel = obs_node.linear_velocity
+		elif "velocity" in obs_node:
+			obs_vel = obs_node.velocity
 
 		for step in range(1, 4):
 			var frac = float(step) / 3.0
@@ -450,7 +543,6 @@ func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, o
 	elif min_clearance < obstacle_danger_radius:
 		return clampf(((min_clearance - critical_obstacle_radius) / (obstacle_danger_radius - critical_obstacle_radius)) * 2.0 - 1.0, -1.0, 1.0)
 	return 1.0
-
 # =====================================================
 # REWARD & TERMINATION
 # =====================================================
@@ -548,6 +640,15 @@ func get_reward() -> float:
 
 func get_done() -> bool:
 	if needs_reset:
+		return true
+
+	# 6,000 Step Max Episode Termination
+	if actions_taken >= max_episode_steps:
+		if is_instance_valid(swarm_controller):
+			swarm_controller.trigger_swarm_failure("Max Steps Reached (%d)" % max_episode_steps, actions_taken)
+		_snapshot_terminal_stats()
+		done = true
+		needs_reset = true
 		return true
 
 	if is_instance_valid(swarm_controller) and swarm_controller.swarm_failed:

@@ -15,8 +15,8 @@
 [ext_resource type="Script" path="res://scripts/grid_manager.gd" id="12_fj23i"]
 [ext_resource type="Script" path="res://scripts/grid_logger.gd" id="13_fes1f"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="13_ihgyo"]
-[ext_resource type="Script" path="res://scripts/obstacles.gd" id="14_srhl7"]
-[ext_resource type="Script" path="res://scripts/moving_obstacles.gd" id="15_2mx36"]
+[ext_resource type="Script" path="res://scripts/ObstacleSpawner.gd" id="14_srhl7"]
+[ext_resource type="Script" path="res://scripts/MovingObstacle.gd" id="15_2mx36"]
 [ext_resource type="PackedScene" uid="uid://b5qa6bqmpaf53" path="res://scenes/static_ground_obstacle.tscn" id="15_3il8t"]
 [ext_resource type="PackedScene" uid="uid://c3kb0oyop7cwy" path="res://scenes/static_air_obstacle.tscn" id="16_awipf"]
 [ext_resource type="PackedScene" uid="uid://dc1g0fyovrdy6" path="res://scenes/moving_air_obstacle.tscn" id="17_q8vtn"]
@@ -145,54 +145,6 @@ script = ExtResource("13_fes1f")
 [node name="RLBridge" type="Node3D" parent="."]
 script = ExtResource("12_cpfqh")
 
-[node name="HUD" type="Control" parent="."]
-layout_mode = 3
-anchors_preset = 0
-offset_right = 40.0
-offset_bottom = 40.0
-script = ExtResource("13_ihgyo")
-
-[node name="Coverage" type="Label" parent="HUD"]
-layout_mode = 0
-offset_right = 40.0
-offset_bottom = 23.0
-theme_override_colors/font_color = Color(0.976471, 0.988235, 0, 1)
-theme_override_font_sizes/font_size = 50
-text = "0 %"
-
-[node name="CameraMode" type="Label" parent="HUD"]
-layout_mode = 0
-offset_top = 100.0
-offset_right = 40.0
-offset_bottom = 123.0
-theme_override_colors/font_color = Color(0.976471, 0.988235, 0, 1)
-theme_override_font_sizes/font_size = 40
-text = "Camera mode: Static"
-autowrap_mode = 2
-
-[node name="DroneSpeed" type="VBoxContainer" parent="HUD"]
-layout_mode = 0
-offset_left = 10.0
-offset_top = 300.0
-offset_right = 146.0
-offset_bottom = 343.0
-scale = Vector2(2, 2)
-
-[node name="SpeedLabel" type="Label" parent="HUD/DroneSpeed"]
-layout_mode = 2
-text = "Drone Speed: 100"
-
-[node name="SpeedSlider" type="HSlider" parent="HUD/DroneSpeed"]
-layout_mode = 2
-value = 100.0
-
-[node name="TrailToggles" type="VBoxContainer" parent="HUD"]
-layout_mode = 0
-offset_top = 400.0
-offset_right = 40.0
-offset_bottom = 440.0
-scale = Vector2(2, 2)
-
 [node name="Obstacles" type="Node3D" parent="."]
 script = ExtResource("14_srhl7")
 spawn_count = 2
@@ -218,7 +170,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 57.5118, 17.7835, 124.991)
 process_mode = 4
 visible = false
 script = ExtResource("15_2mx36")
-speed = 10.0
+pattern = 3
 
 [node name="Ground" type="Node3D" parent="Obstacles/Moving"]
 process_mode = 4
@@ -229,3 +181,131 @@ process_mode = 4
 process_mode = 4
 
 [node name="MovingAirObstacle" parent="Obstacles/Moving/Air" instance=ExtResource("17_q8vtn")]
+
+[node name="MultiViewContainer" type="GridContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+columns = 2
+
+[node name="View1" type="SubViewportContainer" parent="MultiViewContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="MultiViewContainer/View1"]
+handle_input_locally = false
+size = Vector2i(574, 322)
+render_target_update_mode = 4
+
+[node name="CameraFollow" type="Camera3D" parent="MultiViewContainer/View1/SubViewport" node_paths=PackedStringArray("swarm_controller")]
+script = ExtResource("3_gull1")
+current_mode = 0
+swarm_controller = NodePath("../../../../Swarm Controller")
+
+[node name="View2" type="SubViewportContainer" parent="MultiViewContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="MultiViewContainer/View2"]
+handle_input_locally = false
+size = Vector2i(574, 322)
+render_target_update_mode = 4
+
+[node name="CameraManual" type="Camera3D" parent="MultiViewContainer/View2/SubViewport" node_paths=PackedStringArray("swarm_controller")]
+script = ExtResource("3_gull1")
+current_mode = 1
+swarm_controller = NodePath("../../../../Swarm Controller")
+
+[node name="View3" type="SubViewportContainer" parent="MultiViewContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="MultiViewContainer/View3"]
+handle_input_locally = false
+size = Vector2i(574, 322)
+render_target_update_mode = 4
+
+[node name="CameraStatic" type="Camera3D" parent="MultiViewContainer/View3/SubViewport" node_paths=PackedStringArray("swarm_controller")]
+script = ExtResource("3_gull1")
+swarm_controller = NodePath("../../../../Swarm Controller")
+
+[node name="View4" type="SubViewportContainer" parent="MultiViewContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+stretch = true
+
+[node name="SubViewport" type="SubViewport" parent="MultiViewContainer/View4"]
+handle_input_locally = false
+size = Vector2i(574, 322)
+render_target_update_mode = 4
+
+[node name="CameraSide" type="Camera3D" parent="MultiViewContainer/View4/SubViewport" node_paths=PackedStringArray("swarm_controller")]
+script = ExtResource("3_gull1")
+current_mode = 3
+swarm_controller = NodePath("../../../../Swarm Controller")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="HUD" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("13_ihgyo")
+
+[node name="Coverage" type="Label" parent="CanvasLayer/HUD"]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 23.0
+theme_override_colors/font_color = Color(0.976471, 0.988235, 0, 1)
+theme_override_font_sizes/font_size = 50
+text = "0 %"
+
+[node name="CameraMode" type="Label" parent="CanvasLayer/HUD"]
+visible = false
+layout_mode = 0
+offset_top = 100.0
+offset_right = 40.0
+offset_bottom = 123.0
+theme_override_colors/font_color = Color(0.976471, 0.988235, 0, 1)
+theme_override_font_sizes/font_size = 40
+text = "Camera mode: Static"
+autowrap_mode = 2
+
+[node name="DroneSpeed" type="VBoxContainer" parent="CanvasLayer/HUD"]
+layout_mode = 0
+offset_left = 10.0
+offset_top = 300.0
+offset_right = 146.0
+offset_bottom = 343.0
+scale = Vector2(2, 2)
+
+[node name="SpeedLabel" type="Label" parent="CanvasLayer/HUD/DroneSpeed"]
+layout_mode = 2
+text = "Drone Speed: 100"
+
+[node name="SpeedSlider" type="HSlider" parent="CanvasLayer/HUD/DroneSpeed"]
+layout_mode = 2
+value = 100.0
+
+[node name="TrailToggles" type="VBoxContainer" parent="CanvasLayer/HUD"]
+layout_mode = 0
+offset_top = 400.0
+offset_right = 40.0
+offset_bottom = 440.0
+scale = Vector2(2, 2)
+
+[node name="ViewLayoutOption" type="OptionButton" parent="CanvasLayer/HUD"]
+layout_mode = 0
+offset_top = 200.0
+offset_right = 32.0
+offset_bottom = 220.0
