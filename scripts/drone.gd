@@ -331,7 +331,7 @@ func set_position_from_ned(ned_pos: Vector3, origin: Vector3 = Vector3.ZERO) -> 
 # Add to drone.gd
 
 ## Returns all obstacles currently perceived within a given sensor radius with full SLAM telemetry
-func get_perceived_obstacles_slam(radius: float = 12.0) -> Array[Dictionary]:
+func get_perceived_obstacles_slam(radius: float = 20.0) -> Array[Dictionary]:
 	var results: Array[Dictionary] = []
 	var obstacles = get_tree().get_nodes_in_group("obstacles")
 	for obs in obstacles:

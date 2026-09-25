@@ -1,3 +1,4 @@
+# AIController3D.gd
 extends AIController3D
 
 const Drone = preload("res://scripts/drone.gd")
@@ -15,15 +16,16 @@ var navigator: Node3D = null
 
 @export_group("Observation Noise & Domain Randomization")
 @export var obs_noise: bool = false
-@export var position_noise_std: float = 0.02   # SLAM drift / position noise (normalized)
-@export var velocity_noise_std: float = 0.04   # IMU / velocity estimation noise (normalized)
-@export var range_noise_std: float = 0.03      # Lidar / rangefinder distance noise (normalized)
-@export var battery_noise_std: float = 0.01    # Battery sensor telemetry noise
+@export var position_noise_std: float = 0.02   
+@export var velocity_noise_std: float = 0.04   
+@export var range_noise_std: float = 0.03      
+@export var battery_noise_std: float = 0.01    
 
 @export_group("Safety Enforcement")
 @export var enforce_blocked_cells: bool = false
 @export var enable_action_masking: bool = false
-@export var enable_teammate_collision: bool = true   # <--- ADD THIS TOGGLE
+@export var enable_teammate_collision: bool = true
+@export var enable_active_safety_abort: bool = true
 
 @export_group("Observation Dimensions")
 @export var max_tracked_frontiers: int = 3
@@ -31,31 +33,37 @@ var navigator: Node3D = null
 @export var max_tracked_obstacles: int = 3
 @export var max_tracked_teammates: int = 3
 
-@export var max_velocity_reference: float = 5.0
+@export var max_velocity_reference: float = 100.0
 @export var max_distance_reference: float = 30.0
-@export var prediction_horizon_seconds: float = 1.5
+@export var prediction_horizon_seconds: float = 2.5
 
 @export_group("Rewards & Penalties")
-@export var completion_bonus: float = 50.0
-@export var nfz_violation_penalty: float = 15.0
+@export var completion_bonus: float = 60.0
+@export var nfz_violation_penalty: float = 25.0
 @export var obstacle_collision_penalty: float = 200.0
-@export var teammate_collision_penalty: float = 20.0
+@export var teammate_collision_penalty: float = 180.0
 @export var battery_depletion_penalty: float = 15.0
-@export var voxel_reward_weight: float = 0.2
-@export var time_step_penalty: float = 0.05
+@export var voxel_reward_weight: float = 0.25
+@export var time_step_penalty: float = 0.04
 @export var invalid_move_penalty: float = 1.0
 @export var revisit_penalty: float = 0.15
+@export var dangerous_action_penalty: float = 20.0
 
 @export_group("Potential Shaping")
 @export var frontier_shaping_weight: float = 0.5
-@export var obstacle_shaping_weight: float = 0.3
-@export var obstacle_danger_radius: float = 8.0
+@export var obstacle_shaping_weight: float = 0.35
 
-@export_group("Dynamic Obstacle Avoidance")
-@export var critical_obstacle_radius: float = 3.5
-@export var obstacle_proximity_weight: float = 0.35
-@export var obstacle_closing_penalty_weight: float = 0.25
-@export var transit_near_miss_weight: float = 0.8
+@export_group("Dynamic Obstacle & Teammate Avoidance")
+@export var critical_obstacle_radius: float = 3.0
+@export var obstacle_danger_radius: float = 7.0
+@export var obstacle_proximity_weight: float = 0.80
+@export var obstacle_closing_penalty_weight: float = 0.95
+@export var transit_near_miss_weight: float = 0.80
+
+@export var teammate_danger_radius: float = 6.0
+@export var teammate_proximity_weight: float = 0.35
+@export var teammate_closing_penalty_weight: float = 0.30
+@export var swarm_dispersion_bonus_weight: float = 0.10
 
 var cached_centroids: Array = []
 var _cached_nfz_nodes: Array = []
@@ -76,6 +84,7 @@ var _current_frontier_dist: float = -1.0
 var _current_nearest_obstacle_dist: float = -1.0
 var _current_nearest_closing_speed: float = 0.0
 var _invalid_move_penalized := false
+var _waypoint_aborted_due_to_hazard := false
 
 var _transit_min_obstacle_dist: float = INF
 var _current_obstacle_distances: Array[float] = []
@@ -83,13 +92,14 @@ var _current_obstacle_distances: Array[float] = []
 var recent_positions: Array[Vector3i] = []
 const MAX_RECENT_POSITIONS: int = 8
 
-# Terminal snapshot shared with Python
 var _terminal_snapshot: Array = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
+# 7 ACTIONS: 6 DIRECTIONS + 1 STAY/CURRENT CELL
 const DIRECTIONS = [
 	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
 	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
-	Vector3i(0, 0, 1), Vector3i(0, 0, -1)
+	Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+	Vector3i(0, 0, 0) # Action 6: Stay in current cell
 ]
 
 func _ready() -> void:
@@ -136,7 +146,7 @@ func _physics_process(_delta: float) -> void:
 
 		_track_transit_obstacle_proximity(drone_pos)
 
-		if enforce_blocked_cells:
+		if (enforce_blocked_cells or enable_active_safety_abort) and is_instance_valid(navigator) and navigator.has_target:
 			_check_imminent_obstacle_danger(drone_pos)
 
 func _track_transit_obstacle_proximity(drone_pos: Vector3) -> void:
@@ -149,18 +159,76 @@ func _track_transit_obstacle_proximity(drone_pos: Vector3) -> void:
 			if d < _transit_min_obstacle_dist:
 				_transit_min_obstacle_dist = d
 
-func _check_imminent_obstacle_danger(_drone_pos: Vector3) -> void:
-	if not is_instance_valid(grid_manager) or not grid_manager.has_method("is_straight_path_safe"):
-		return
+func _check_imminent_obstacle_danger(drone_pos: Vector3) -> void:
 	if not is_instance_valid(navigator) or not navigator.has_target:
 		return
 
-	var current_grid_pos = _get_current_grid_pos()
-	var target_grid_pos = grid_manager.world_to_grid(navigator.current_target_pos) if grid_manager.has_method("world_to_grid") else current_grid_pos
+	var target_pos: Vector3 = navigator.current_target_pos
+	var flight_vector: Vector3 = target_pos - drone_pos
+	var remaining_dist: float = flight_vector.length()
 
-	if not grid_manager.is_straight_path_safe(current_grid_pos, target_grid_pos):
+	if remaining_dist < 0.1:
+		return
+
+	var should_abort: bool = false
+	var reason: String = ""
+
+	# 1. Static grid check
+	var current_grid_pos = _get_current_grid_pos()
+	var target_grid_pos = grid_manager.world_to_grid(target_pos) if grid_manager.has_method("world_to_grid") else current_grid_pos
+
+	if is_instance_valid(grid_manager) and grid_manager.has_method("is_straight_path_hazardous"):
+		if grid_manager.is_straight_path_hazardous(current_grid_pos, target_grid_pos):
+			should_abort = true
+			reason = "Trajectory leads into a blocked/hazardous cell"
+
+	# 2. Dynamic obstacle check
+	if not should_abort and get_tree():
+		var raw_obstacles = get_tree().get_nodes_in_group("obstacles")
+		for obs_node in raw_obstacles:
+			if not is_instance_valid(obs_node) or obs_node.is_queued_for_deletion() or not (obs_node is Node3D):
+				continue
+
+			var obs_pos: Vector3 = (obs_node as Node3D).global_position
+			if drone_pos.distance_to(obs_pos) > obstacle_danger_radius:
+				continue
+
+			var closest_point_on_path = Geometry3D.get_closest_point_to_segment(obs_pos, drone_pos, target_pos)
+			var path_clearance = obs_pos.distance_to(closest_point_on_path)
+			var to_obs = (obs_pos - drone_pos).normalized()
+			var is_heading_towards = flight_vector.normalized().dot(to_obs) > 0.2
+
+			if path_clearance < critical_obstacle_radius and is_heading_towards:
+				should_abort = true
+				reason = "Flight trajectory intersects dynamic obstacle '%s' (Clearance: %.2fm)" % [obs_node.name, path_clearance]
+				break
+
+	# 3. Teammate check
+	if not should_abort and enable_teammate_collision and get_tree():
+		var raw_drones = get_tree().get_nodes_in_group("drones")
+		for other in raw_drones:
+			if not is_instance_valid(other) or other == drone or other.is_queued_for_deletion() or not (other is Node3D):
+				continue
+
+			var team_pos: Vector3 = (other as Node3D).global_position
+			if drone_pos.distance_to(team_pos) > teammate_danger_radius:
+				continue
+
+			var closest_point = Geometry3D.get_closest_point_to_segment(team_pos, drone_pos, target_pos)
+			var team_clearance = team_pos.distance_to(closest_point)
+			var to_team = (team_pos - drone_pos).normalized()
+			var is_heading_towards_team = flight_vector.normalized().dot(to_team) > 0.3
+
+			if team_clearance < critical_obstacle_radius * 0.75 and is_heading_towards_team:
+				should_abort = true
+				reason = "Flight trajectory intersects teammate '%s' (Clearance: %.2fm)" % [other.name, team_clearance]
+				break
+
+	if should_abort:
+		print("[SAFETY SYSTEM] %s canceled waypoint! Reason: %s" % [drone.name, reason])
 		if navigator.has_method("cancel_current_target"):
 			navigator.cancel_current_target()
+		_waypoint_aborted_due_to_hazard = true
 
 func _connect_drone_signals() -> void:
 	if _signals_connected or not is_instance_valid(drone):
@@ -168,33 +236,26 @@ func _connect_drone_signals() -> void:
 	if drone.has_signal("collided") and not drone.collided.is_connected(_on_drone_collided):
 		drone.collided.connect(_on_drone_collided)
 		_signals_connected = true
-		
+
 func _on_drone_collided(collider: Node) -> void:
 	if done or violated or hit_obstacle or hit_teammate or battery_depleted:
 		return
 
-	# Teammate / Drone-to-Drone Collision
 	if is_instance_valid(collider) and (collider.is_in_group("drones") or collider is Drone):
 		if not enable_teammate_collision:
-			return # Ignore teammate collision completely when disabled
-
+			return
 		hit_teammate = true
 		if is_instance_valid(swarm_controller):
 			swarm_controller.trigger_swarm_failure("Teammate Collision (" + drone.name + " with " + collider.name + ")", actions_taken)
-	
-	# Obstacle Collision
 	else:
 		hit_obstacle = true
 		var obs_type = _resolve_obstacle_type(collider)
 		if is_instance_valid(swarm_controller):
 			swarm_controller.trigger_swarm_failure("Obstacle Collision [" + obs_type + "] (" + drone.name + ")", actions_taken)
-			
-## Helper to extract the SLAM category / obstacle type from any part of the collider hierarchy
+
 func _resolve_obstacle_type(collider: Node) -> String:
 	if not is_instance_valid(collider):
 		return "UNKNOWN_OBSTACLE"
-
-	# Check collider, its parent, and its children for ObstacleTag
 	var tag: ObstacleTag = null
 	if collider.has_node("ObstacleTag"):
 		tag = collider.get_node("ObstacleTag") as ObstacleTag
@@ -206,14 +267,12 @@ func _resolve_obstacle_type(collider: Node) -> String:
 	if tag != null:
 		return ObstacleTag.ObstacleCategory.keys()[tag.category]
 
-	# Fallback to node group or name if no tag found
 	if collider.is_in_group("obstacles"):
 		return collider.name
 	if collider.get_parent() and collider.get_parent().is_in_group("obstacles"):
 		return collider.get_parent().name
-
 	return "STATIC_STRUCTURE"
-	
+
 func _get_current_grid_pos() -> Vector3i:
 	if not is_instance_valid(drone) or not is_instance_valid(grid_manager):
 		return Vector3i.ZERO
@@ -224,7 +283,6 @@ func _get_current_grid_pos() -> Vector3i:
 # =====================================================
 # SENSOR NOISE HELPERS
 # =====================================================
-
 func _gaussian_noise(std: float) -> float:
 	var u1 = maxf(randf(), 1e-7)
 	var u2 = randf()
@@ -238,7 +296,6 @@ func _noisy(val: float, std: float, min_val: float = -1.0, max_val: float = 1.0)
 # =====================================================
 # SWARM-LEVEL ATTRIBUTION SNAPSHOT
 # =====================================================
-
 func _snapshot_terminal_stats() -> void:
 	var coverage_pct = grid_manager.get_coverage_percentage() if (is_instance_valid(grid_manager) and grid_manager.has_method("get_coverage_percentage")) else 0.0
 	var is_success = coverage_pct >= coverage_threshold
@@ -264,11 +321,10 @@ func _snapshot_terminal_stats() -> void:
 		_terminal_snapshot = [float(coverage_pct), 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # =====================================================
-# OBSERVATIONS
+# OBSERVATIONS (Dynamically matches DIRECTIONS.size() = 7)
 # =====================================================
-
 func get_obs() -> Dictionary:
-	var total_obs_size = 8 + (max_tracked_frontiers * 3) + (max_tracked_nfz * 3) + (max_tracked_obstacles * 8) + (max_tracked_teammates * 8) + 6 + 6 + 6
+	var total_obs_size = 8 + (max_tracked_frontiers * 3) + (max_tracked_nfz * 3) + (max_tracked_obstacles * 8) + (max_tracked_teammates * 8) + (DIRECTIONS.size() * 3)
 
 	if not is_instance_valid(drone) or not is_instance_valid(grid_manager):
 		var empty_obs: Array = []
@@ -353,8 +409,8 @@ func get_obs() -> Dictionary:
 			])
 		else:
 			obs.append_array([1.0, 1.0, 1.0])
-# Inside AIController3D -> get_obs() - Section 3: Dynamic Obstacles
-	# 3. Dynamic Obstacles (Integrated with ObstacleTag / SLAM Module)
+
+	# 3. Dynamic Obstacles
 	var raw_obstacles = get_tree().get_nodes_in_group("obstacles") if get_tree() else []
 	var obstacles = raw_obstacles.filter(func(n): return is_instance_valid(n) and not n.is_queued_for_deletion())
 	obstacles.sort_custom(func(a, b): return pos.distance_squared_to(a.global_position) < pos.distance_squared_to(b.global_position))
@@ -370,23 +426,12 @@ func get_obs() -> Dictionary:
 			var dist = delta_pos.length()
 			tracked_obstacle_distances.append(dist)
 
-			# Extract SLAM velocity
-			var obs_vel = Vector3.ZERO
-			var tag = obs_node.get_node_or_null("ObstacleTag") as ObstacleTag
-			if tag != null:
-				obs_vel = tag.estimated_velocity
-			elif obs_node is RigidBody3D:
-				obs_vel = obs_node.linear_velocity
-			elif "velocity" in obs_node:
-				obs_vel = obs_node.velocity
-
+			var obs_vel = _extract_velocity(obs_node)
 			var rel_vel = obs_vel - vel
-
 			var closing_speed = 0.0
 			if dist > 0.001:
 				closing_speed = -(delta_pos.dot(rel_vel)) / dist
 			var norm_closing_speed = clampf(closing_speed / (max_velocity_reference * 2.0), -1.0, 1.0)
-
 			var min_predicted_dist = _calculate_cpa_distance(delta_pos, rel_vel, prediction_horizon_seconds)
 			var norm_cpa_dist = clampf(min_predicted_dist / max_distance_reference, 0.0, 1.0)
 
@@ -412,6 +457,7 @@ func get_obs() -> Dictionary:
 			obs.append_array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
 	_current_obstacle_distances = tracked_obstacle_distances
+
 	# 4. Teammates
 	var raw_drones = get_tree().get_nodes_in_group("drones") if get_tree() else []
 	var other_drones = raw_drones.filter(func(d): return is_instance_valid(d) and d != drone and not d.is_queued_for_deletion())
@@ -453,30 +499,39 @@ func get_obs() -> Dictionary:
 	var action_mask: Array[float] = []
 
 	for dir_idx in range(DIRECTIONS.size()):
-		var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, dir_idx) if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
-		var is_hazard = true
-		if target_coord != current_grid_pos and grid_manager.has_method("is_within_grid_limits") and grid_manager.is_within_grid_limits(target_coord):
-			if grid_manager.has_method("is_straight_path_hazardous"):
-				is_hazard = grid_manager.is_straight_path_hazardous(current_grid_pos, target_coord)
+		var is_hazard = false
+		if dir_idx == 6: # STAY
+			is_hazard = not grid_manager.is_cell_strictly_free(current_grid_pos) if grid_manager.has_method("is_cell_strictly_free") else false
+		else:
+			var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, dir_idx) if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
+			if target_coord != current_grid_pos and grid_manager.has_method("is_within_grid_limits") and grid_manager.is_within_grid_limits(target_coord):
+				if grid_manager.has_method("is_straight_path_hazardous"):
+					is_hazard = grid_manager.is_straight_path_hazardous(current_grid_pos, target_coord)
 			else:
-				is_hazard = false
+				is_hazard = true
+
 		obs.append(-1.0 if is_hazard else 1.0)
 		action_mask.append(0.0 if is_hazard else 1.0)
 
-	# 6. Dynamic Clearance Per Direction
-	var step_distance = (grid_manager.cell_size if "cell_size" in grid_manager else 2.0)
+	# 6. Dynamic Clearance Per Direction (including Stay in place)
 	for dir_idx in range(DIRECTIONS.size()):
-		var dir_vec = Vector3(DIRECTIONS[dir_idx]).normalized()
-		var candidate_target_world = pos + dir_vec * step_distance
-		var dynamic_hazard_score = _evaluate_dynamic_action_hazard(pos, candidate_target_world, obstacles)
+		var target_coord = (
+			grid_manager.get_adjacent_octree_center(current_grid_pos, dir_idx)
+			if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
+		)
+		var candidate_target_world = grid_manager.grid_to_world(target_coord) if grid_manager.has_method("grid_to_world") else pos
+		var dynamic_hazard_score = _evaluate_dynamic_action_hazard(pos, candidate_target_world, obstacles, other_drones)
 		obs.append(_noisy(dynamic_hazard_score, range_noise_std, -1.0, 1.0))
-
-	# 7. Local Visited state for each of the 6 directions
+		
+	# 7. Local Visited state
 	for dir_idx in range(DIRECTIONS.size()):
-		var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, dir_idx) if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
 		var is_visited: bool = false
-		if "visited_cells" in grid_manager and grid_manager.visited_cells != null:
-			is_visited = grid_manager.visited_cells.has(target_coord)
+		if dir_idx == 6:
+			is_visited = true
+		else:
+			var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, dir_idx) if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
+			if "visited_cells" in grid_manager and grid_manager.visited_cells != null:
+				is_visited = grid_manager.visited_cells.has(target_coord)
 		obs.append(-1.0 if is_visited else 1.0)
 
 	if is_instance_valid(navigator) and not navigator.has_target:
@@ -500,6 +555,17 @@ func get_obs() -> Dictionary:
 # =====================================================
 # DYNAMIC TRAJECTORY PREDICTION HELPERS
 # =====================================================
+func _extract_velocity(node: Node3D) -> Vector3:
+	if not is_instance_valid(node):
+		return Vector3.ZERO
+	var tag = node.get_node_or_null("ObstacleTag") as ObstacleTag
+	if tag != null:
+		return tag.estimated_velocity
+	if node is RigidBody3D:
+		return node.linear_velocity
+	if "velocity" in node:
+		return node.velocity
+	return Vector3.ZERO
 
 func _calculate_cpa_distance(delta_pos: Vector3, rel_vel: Vector3, horizon: float) -> float:
 	var v_sq = rel_vel.length_squared()
@@ -509,8 +575,8 @@ func _calculate_cpa_distance(delta_pos: Vector3, rel_vel: Vector3, horizon: floa
 	var t_cpa = -delta_pos.dot(rel_vel) / v_sq
 	var clamped_t = clampf(t_cpa, 0.0, horizon)
 	return (delta_pos + rel_vel * clamped_t).length()
-	
-func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, obstacles: Array) -> float:
+
+func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, obstacles: Array, teammates: Array) -> float:
 	var min_clearance := 999.0
 	var action_dir = (drone_end - drone_start)
 
@@ -518,17 +584,7 @@ func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, o
 		if not is_instance_valid(obs_node):
 			continue
 		var obs_pos = obs_node.global_position
-		
-		# SLAM-tracked velocity extraction
-		var obs_vel = Vector3.ZERO
-		var tag = obs_node.get_node_or_null("ObstacleTag") as ObstacleTag
-		if tag != null:
-			obs_vel = tag.estimated_velocity
-		elif obs_node is RigidBody3D:
-			obs_vel = obs_node.linear_velocity
-		elif "velocity" in obs_node:
-			obs_vel = obs_node.velocity
-
+		var obs_vel = _extract_velocity(obs_node)
 		for step in range(1, 4):
 			var frac = float(step) / 3.0
 			var t = frac * prediction_horizon_seconds
@@ -538,15 +594,29 @@ func _evaluate_dynamic_action_hazard(drone_start: Vector3, drone_end: Vector3, o
 			if dist < min_clearance:
 				min_clearance = dist
 
+	for team in teammates:
+		if not is_instance_valid(team) or team == drone:
+			continue
+		var team_pos = team.global_position
+		var team_vel = team.linear_velocity if team is RigidBody3D else Vector3.ZERO
+		for step in range(1, 4):
+			var frac = float(step) / 3.0
+			var t = frac * prediction_horizon_seconds
+			var proj_drone = drone_start + action_dir * frac
+			var proj_team = team_pos + team_vel * t
+			var dist = proj_drone.distance_to(proj_team)
+			if dist < min_clearance:
+				min_clearance = dist
+
 	if min_clearance < critical_obstacle_radius:
 		return -1.0
 	elif min_clearance < obstacle_danger_radius:
 		return clampf(((min_clearance - critical_obstacle_radius) / (obstacle_danger_radius - critical_obstacle_radius)) * 2.0 - 1.0, -1.0, 1.0)
 	return 1.0
+
 # =====================================================
 # REWARD & TERMINATION
 # =====================================================
-
 func get_reward() -> float:
 	if not is_instance_valid(grid_manager):
 		return 0.0
@@ -583,8 +653,11 @@ func get_reward() -> float:
 	if is_instance_valid(navigator) and navigator.has_target:
 		return 0.0
 
+	var pos = drone.global_position
+	var vel = drone.linear_velocity if drone is RigidBody3D else Vector3.ZERO
 	var current_cell = _get_current_grid_pos()
 
+	# 1. Revisit Penalty
 	var revisit_penalty_total := 0.0
 	if recent_positions.has(current_cell):
 		var count = recent_positions.count(current_cell)
@@ -600,11 +673,17 @@ func get_reward() -> float:
 
 	reward = (float(new_voxels) * voxel_reward_weight) - time_step_penalty - revisit_penalty_total
 
+	if _waypoint_aborted_due_to_hazard:
+		_waypoint_aborted_due_to_hazard = false
+		reward -= dangerous_action_penalty
+
+	# 2. Frontier Shaping
 	if _prev_frontier_dist >= 0.0 and _current_frontier_dist >= 0.0:
 		var delta = clampf(_prev_frontier_dist - _current_frontier_dist, -1.0, 1.0)
 		reward += delta * frontier_shaping_weight
 	_prev_frontier_dist = _current_frontier_dist
 
+	# 3. Dynamic Obstacle Proximity
 	var proximity_penalty := 0.0
 	for d in _current_obstacle_distances:
 		if d < obstacle_danger_radius:
@@ -628,6 +707,29 @@ func get_reward() -> float:
 		reward -= severity * severity * transit_near_miss_weight
 	_transit_min_obstacle_dist = INF
 
+	# 4. Dense Teammate Proximity & Swarm Spatial Dispersion
+	var raw_drones = get_tree().get_nodes_in_group("drones") if get_tree() else []
+	var team_proximity_penalty := 0.0
+	for other in raw_drones:
+		if is_instance_valid(other) and other != drone and not other.is_queued_for_deletion():
+			var d = pos.distance_to(other.global_position)
+			if d < teammate_danger_radius:
+				var closeness = clampf(1.0 - (d / teammate_danger_radius), 0.0, 1.0)
+				team_proximity_penalty += (closeness * closeness)
+
+				var other_vel = other.linear_velocity if other is RigidBody3D else Vector3.ZERO
+				var rel_vel = other_vel - vel
+				var to_other = other.global_position - pos
+				var closing_speed = -(to_other.dot(rel_vel)) / maxf(d, 0.001)
+				if closing_speed > 0.0:
+					var closing_factor = clampf(closing_speed / max_velocity_reference, 0.0, 1.5)
+					reward -= closeness * closing_factor * teammate_closing_penalty_weight
+			elif d > teammate_danger_radius and d < (teammate_danger_radius * 2.0):
+				reward += swarm_dispersion_bonus_weight * 0.1
+
+	reward -= team_proximity_penalty * teammate_proximity_weight
+
+	# 5. Completion Bonus
 	if coverage >= coverage_threshold:
 		if is_instance_valid(swarm_controller):
 			swarm_controller.trigger_swarm_failure("Coverage Success [SUCCESS]", actions_taken)
@@ -642,7 +744,6 @@ func get_done() -> bool:
 	if needs_reset:
 		return true
 
-	# 6,000 Step Max Episode Termination
 	if actions_taken >= max_episode_steps:
 		if is_instance_valid(swarm_controller):
 			swarm_controller.trigger_swarm_failure("Max Steps Reached (%d)" % max_episode_steps, actions_taken)
@@ -672,12 +773,11 @@ func get_done() -> bool:
 # =====================================================
 # ACTION SPACE
 # =====================================================
-
 func get_action_space() -> Dictionary:
 	return {
 		"flight_waypoint": {
 			"action_type": "discrete",
-			"size": DIRECTIONS.size()
+			"size": DIRECTIONS.size() # Size is 7
 		}
 	}
 
@@ -702,17 +802,19 @@ func set_action(action) -> void:
 	actions_taken += 1
 
 	var current_grid_pos = _get_current_grid_pos()
-	var target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, action_idx) if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
+	var target_coord = current_grid_pos
 
-	target_coord.x = clampi(target_coord.x, 0, grid_manager.grid_size.x - 1)
-	target_coord.y = clampi(target_coord.y, 0, grid_manager.grid_size.y - 1)
-	target_coord.z = clampi(target_coord.z, 0, grid_manager.grid_size.z - 1)
+	if action_idx < 6:
+		target_coord = grid_manager.get_adjacent_octree_center(current_grid_pos, action_idx) if grid_manager.has_method("get_adjacent_octree_center") else current_grid_pos
+		target_coord.x = clampi(target_coord.x, 0, grid_manager.grid_size.x - 1)
+		target_coord.y = clampi(target_coord.y, 0, grid_manager.grid_size.y - 1)
+		target_coord.z = clampi(target_coord.z, 0, grid_manager.grid_size.z - 1)
 
-	if enforce_blocked_cells:
-		var is_safe = grid_manager.has_method("is_straight_path_safe") and grid_manager.is_straight_path_safe(current_grid_pos, target_coord)
-		if not is_safe:
-			_invalid_move_penalized = true
-			target_coord = current_grid_pos
+		if enforce_blocked_cells:
+			var is_safe = grid_manager.has_method("is_straight_path_safe") and grid_manager.is_straight_path_safe(current_grid_pos, target_coord)
+			if not is_safe:
+				_invalid_move_penalized = true
+				target_coord = current_grid_pos
 
 	if navigator.has_method("perform_action"):
 		navigator.perform_action(target_coord)
@@ -720,7 +822,6 @@ func set_action(action) -> void:
 # =====================================================
 # RESET
 # =====================================================
-
 func reset() -> void:
 	_snapshot_terminal_stats()
 	super.reset()
@@ -731,6 +832,7 @@ func reset() -> void:
 	hit_teammate = false
 	battery_depleted = false
 	_invalid_move_penalized = false
+	_waypoint_aborted_due_to_hazard = false
 
 	actions_taken = 0
 	previous_discovered_voxels = 0
@@ -765,7 +867,6 @@ func set_done_false():
 # =====================================================
 # NFZ UTILITIES
 # =====================================================
-
 func _get_nfz_nodes() -> Array:
 	_cached_nfz_nodes = _cached_nfz_nodes.filter(func(n): return is_instance_valid(n) and not n.is_queued_for_deletion())
 	if not _cached_nfz_nodes.is_empty():

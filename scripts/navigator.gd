@@ -96,20 +96,32 @@ func setup_visualizers() -> void:
 # ==========================================
 # REINFORCEMENT LEARNING API
 # ==========================================
-
 func perform_action(target_coord: Vector3i) -> void:
 	if not is_instance_valid(grid_manager) or not is_instance_valid(drone):
 		return
 		
+	var start_grid_pos = _get_current_grid_pos()
 	var clamped_coord = Vector3i(
 		clampi(target_coord.x, 0, grid_manager.grid_size.x - 1),
 		clampi(target_coord.y, 0, grid_manager.grid_size.y - 1),
 		clampi(target_coord.z, 0, grid_manager.grid_size.z - 1)
 	)
 
-	var start_grid_pos = _get_current_grid_pos()
+	# ACTION 6: STAY IN CURRENT CELL (1 TIMESTEP)
+	if clamped_coord == start_grid_pos:
+		current_path.clear()
+		has_target = false
+		actions_taken += 1
+		if is_instance_valid(sphere_inst):
+			sphere_inst.visible = false
+		if is_instance_valid(line_mesh) and DisplayServer.get_name() != "headless":
+			line_mesh.clear_surfaces()
+		if drone is RigidBody3D:
+			drone.linear_velocity = Vector3.ZERO
+		return
+
+	# Standard directional movement
 	var raw_path = grid_manager.find_path(start_grid_pos, clamped_coord)
-	
 	current_path.clear()
 	
 	if raw_path.size() > 0:
@@ -119,12 +131,9 @@ func perform_action(target_coord: Vector3i) -> void:
 			elif point is Vector3i:
 				current_path.append(grid_manager.grid_to_world(point))
 		
-		# Remove starting waypoint if already there
 		if current_path.size() > 1 and drone.global_position.distance_to(current_path[0]) < arrival_threshold:
 			current_path.remove_at(0)
 	else:
-		# FALLBACK FOR RL: If A* refuses to path into hazard/obstacle,
-		# fly straight to the target so RL physically experiences the collision!
 		var target_world = grid_manager.grid_to_world(clamped_coord)
 		if drone.global_position.distance_to(target_world) > arrival_threshold:
 			current_path.append(target_world)
@@ -140,7 +149,7 @@ func perform_action(target_coord: Vector3i) -> void:
 	if is_instance_valid(sphere_inst) and current_path.size() > 0:
 		sphere_inst.global_position = current_path[-1]
 		sphere_inst.visible = true
-
+		
 func cancel_current_target() -> void:
 	has_target = false
 	current_path.clear()

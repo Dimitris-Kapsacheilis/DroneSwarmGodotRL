@@ -1,4 +1,4 @@
-[gd_scene load_steps=31 format=3 uid="uid://bhjj5yx5onpie"]
+[gd_scene load_steps=27 format=3 uid="uid://bhjj5yx5onpie"]
 
 [ext_resource type="Script" path="res://scripts/swarm_controller.gd" id="1_hodql"]
 [ext_resource type="Script" path="res://scenes/swarm_test.gd" id="1_vuxhg"]
@@ -6,11 +6,9 @@
 [ext_resource type="PackedScene" uid="uid://c7nf1r4taf5q5" path="res://scenes/drone.tscn" id="2_fl1ek"]
 [ext_resource type="Script" path="res://scripts/NoFlyZone.gd" id="3_63cna"]
 [ext_resource type="Script" path="res://scripts/camera_3d.gd" id="3_gull1"]
-[ext_resource type="ArrayMesh" uid="uid://xdonu5qvxahe" path="res://assets/models/uploads_files_2720101_BusGameMap.obj" id="4_4uwty"]
 [ext_resource type="Script" path="res://scripts/no_fly_zone_manager.gd" id="4_mqnkt"]
 [ext_resource type="Script" path="res://scripts/rl_environment.gd" id="5_x3jkk"]
 [ext_resource type="Script" path="res://scripts/agents/drone_swarm_ai_controller.gd" id="6_h73wq"]
-[ext_resource type="PackedScene" uid="uid://bvag3gg81did5" path="res://assets/models/stavroupoli.glb" id="7_s7ayj"]
 [ext_resource type="Script" path="res://scripts/rl_bridge.gd" id="12_cpfqh"]
 [ext_resource type="Script" path="res://scripts/grid_manager.gd" id="12_fj23i"]
 [ext_resource type="Script" path="res://scripts/grid_logger.gd" id="13_fes1f"]
@@ -53,21 +51,12 @@ fog_density = 1.0
 fog_height = 15.0
 fog_height_density = 0.02
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_rgfwd"]
-albedo_color = Color(0.563523, 0.852489, 0.997853, 0.984314)
-metallic = 0.6
-metallic_specular = 1.0
-emission_enabled = true
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_c4yth"]
-albedo_color = Color(0, 0, 0, 1)
-
 [node name="Swarm Test" type="Node3D"]
 script = ExtResource("1_vuxhg")
 
 [node name="Sync" type="Node" parent="."]
 script = ExtResource("1_wjrew")
-action_repeat = 2
+action_repeat = 1
 
 [node name="SpeedUp" type="Node" parent="."]
 process_mode = 4
@@ -123,18 +112,6 @@ shadow_blur = 1.5
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_xftcb")
-
-[node name="City" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01, -1.256, 0, -5.616)
-visible = false
-material_override = SubResource("StandardMaterial3D_rgfwd")
-mesh = ExtResource("4_4uwty")
-skeleton = NodePath("")
-surface_material_override/0 = SubResource("StandardMaterial3D_c4yth")
-
-[node name="stavroupoli" parent="." instance=ExtResource("7_s7ayj")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 39.5602, 0, 59.0571)
-visible = false
 
 [node name="GridManager" type="Node3D" parent="."]
 script = ExtResource("12_fj23i")

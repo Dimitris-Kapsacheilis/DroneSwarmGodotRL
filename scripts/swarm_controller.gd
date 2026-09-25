@@ -14,6 +14,7 @@ var current_leader: Drone = null
 
 @export var random_spawn: bool = true
 @export var default_spawn_position: Vector3 = Vector3(1.5, 1.5, 1.5)
+@export var min_drone_spawn_distance: float = 3.5 # Minimum meters between drone spawn spots
 
 var drones: Array[Drone] = []
 var _last_reset_frame: int = -1
@@ -126,50 +127,47 @@ func reset_swarm_pos() -> void:
 
 		if drone.has_method("clear_targets"):
 			drone.clear_targets()
+# In SwarmController.gd
+
 
 func _find_clustered_free_cells(count: int) -> Array[Vector3]:
 	var result: Array[Vector3] = []
 	if not is_instance_valid(grid_manager):
 		for i in range(count):
-			result.append(default_spawn_position + Vector3(i * 1.5, 0, 0))
+			result.append(default_spawn_position + Vector3(i * min_drone_spawn_distance, 0, 0))
 		return result
 
 	var grid_size: Vector3i = grid_manager.grid_size
 	var occupied_cells: Dictionary = {}
+	var max_attempts = 500
 
-	var seed_coord = _get_random_free_cell_coord(grid_size, occupied_cells)
+	# Find well-separated free cells
+	for _attempt in range(max_attempts):
+		if result.size() >= count:
+			break
+		
+		var coord = _get_random_free_cell_coord(grid_size, occupied_cells)
+		var candidate_world = grid_manager.grid_to_world(coord)
+		
+		# Ensure minimum distance from all already selected drone spawn spots
+		var too_close = false
+		for chosen_pos in result:
+			if candidate_world.distance_to(chosen_pos) < min_drone_spawn_distance:
+				too_close = true
+				break
+		
+		if not too_close:
+			occupied_cells[coord] = true
+			result.append(candidate_world)
 
-	var neighbor_offsets: Array[Vector3i] = []
-	for dx in range(-1, 2):
-		for dy in range(-1, 2):
-			for dz in range(-1, 2):
-				if dx != 0 or dy != 0 or dz != 0:
-					neighbor_offsets.append(Vector3i(dx, dy, dz))
-	neighbor_offsets.sort_custom(func(a: Vector3i, b: Vector3i) -> bool: return a.length_squared() < b.length_squared())
-
-	var queue: Array[Vector3i] = [seed_coord]
-	var visited: Dictionary = {seed_coord: true}
-
-	while queue.size() > 0 and result.size() < count:
-		var current = queue.pop_front()
-
-		if _is_cell_free(current, grid_size, occupied_cells):
-			occupied_cells[current] = true
-			result.append(grid_manager.grid_to_world(current))
-
-		for offset in neighbor_offsets:
-			var neighbor = current + offset
-			if not visited.has(neighbor) and _is_in_bounds(neighbor, grid_size):
-				visited[neighbor] = true
-				queue.append(neighbor)
-
+	# Fallback if map was crowded
 	while result.size() < count:
-		var fallback = _get_random_free_cell_coord(grid_size, occupied_cells)
-		occupied_cells[fallback] = true
-		result.append(grid_manager.grid_to_world(fallback))
+		var fallback_coord = _get_random_free_cell_coord(grid_size, occupied_cells)
+		occupied_cells[fallback_coord] = true
+		result.append(grid_manager.grid_to_world(fallback_coord))
 
 	return result
-
+	
 func _get_random_free_cell_coord(grid_size: Vector3i, occupied_cells: Dictionary) -> Vector3i:
 	for _attempt in range(300):
 		var rx = rng.randi_range(1, grid_size.x - 2)

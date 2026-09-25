@@ -13,12 +13,12 @@ extends Node3D
 @export var boundary_line_width: float = 2.0
 @export_group("Trail Transparency & Buildup")
 ## Starting alpha on first visit (0.02 = barely visible ghost trail)
-@export_range(0.005, 0.15, 0.005) var initial_trail_alpha: float = 0.001
+@export_range(0.005, 0.15, 0.005) var initial_trail_alpha: float = 0.01
 
 ## SCALE THIS: Controls how fast transparency builds up per revisit.
 ## Lower = takes many passes to become visible (e.g., 0.005 - 0.015)
 ## Higher = gets solid faster (e.g., 0.05 - 0.1)
-@export_range(0.001, 0.1, 0.001) var trail_buildup_speed: float = 0.001
+@export_range(0.001, 0.1, 0.001) var trail_buildup_speed: float = 0.005
 
 ## Maximum solidness cap
 @export_range(0.3, 1.0, 0.05) var max_trail_alpha: float = 1.0
@@ -325,14 +325,19 @@ func is_straight_path_hazardous(from_coord: Vector3i, to_coord: Vector3i) -> boo
 		if not is_cell_strictly_free(check_coord):
 			return true
 	return false
-
+	
 func get_adjacent_octree_center(current_coord: Vector3i, direction_idx: int) -> Vector3i:
 	const DIRS = [
 		Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
 		Vector3i(0, 1, 0), Vector3i(0, -1, 0),
-		Vector3i(0, 0, 1), Vector3i(0, 0, -1)
+		Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+		Vector3i(0, 0, 0) # Action 6: Stay in current cell
 	]
 	if direction_idx < 0 or direction_idx >= DIRS.size():
+		return current_coord
+
+	# If action is 6 (0,0,0), return current position immediately
+	if direction_idx == 6:
 		return current_coord
 
 	var target = current_coord + DIRS[direction_idx] * octree_step_size
