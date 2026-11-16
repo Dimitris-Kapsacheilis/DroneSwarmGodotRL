@@ -45,7 +45,7 @@ func spawn_all_obstacles() -> void:
 
 func _spawn_single_obstacle_guaranteed() -> void:
 	var is_flying = rng.randf() < 0.5
-	var is_moving = rng.randf() < 0.75
+	var is_moving = rng.randf() < 0.0
 	
 	var obstacle: Node3D = _get_scene_instance(is_flying, is_moving)
 	if obstacle == null:

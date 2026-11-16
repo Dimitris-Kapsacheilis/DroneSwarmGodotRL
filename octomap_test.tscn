@@ -1,0 +1,34 @@
+[gd_scene load_steps=5 format=3 uid="uid://b2fwbmswj3hc8"]
+
+[ext_resource type="Script" path="res://scripts/WaypointManager.gd" id="1_8ynq4"]
+[ext_resource type="Script" path="res://scripts/WaypointSender.gd" id="1_e4ci5"]
+[ext_resource type="Script" path="res://octomap_test.gd" id="1_rvvc6"]
+[ext_resource type="Script" path="res://scripts/OctoMapReceiver.gd" id="2_p6emw"]
+
+[node name="Node3D" type="Node3D"]
+script = ExtResource("1_rvvc6")
+
+[node name="OverviewCamera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2.12154)
+current = true
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.510994)
+
+[node name="WaypointManager" type="Node" parent="." node_paths=PackedStringArray("waypoint_sender", "octomap_receiver")]
+script = ExtResource("1_8ynq4")
+waypoint_sender = NodePath("../WaypointSender")
+octomap_receiver = NodePath("../OctoMapReceiver")
+
+[node name="WaypointSender" type="Node" parent="."]
+script = ExtResource("1_e4ci5")
+
+[node name="OctoMapReceiver" type="Node3D" parent="." node_paths=PackedStringArray("overview_camera")]
+script = ExtResource("2_p6emw")
+overview_camera = NodePath("../OverviewCamera")
+
+[node name="Drone" type="Node3D" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="Drone"]
